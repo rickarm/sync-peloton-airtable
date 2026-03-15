@@ -1,0 +1,8 @@
+# CSV import + dedup scripts (Peloton_Airtable_Import.py, Peloton_Dedup.py)
+requests>=2.28
+
+# Scraper (scraper/peloton_class_scrape_stateful.py, peloton_login_save_session.py)
+playwright>=1.40
+
+# After installing playwright, also run:
+# playwright install chromium

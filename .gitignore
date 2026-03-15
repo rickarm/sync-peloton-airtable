@@ -1,0 +1,30 @@
+# Secrets & credentials
+.env
+*.json.secret
+
+# Peloton session state — contains cookies/tokens, never commit
+peloton_state.json
+scraper/peloton_state.json
+
+# Debug artifacts
+debug.json
+*.debug.html
+*.debug.txt
+cycling_debug.*
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

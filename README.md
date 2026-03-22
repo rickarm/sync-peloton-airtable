@@ -1,9 +1,22 @@
 # sync-peloton-airtable
 
-Tools for syncing Peloton workout data into an Airtable base. Two independent workflows:
+Tools for syncing Peloton workout data into an Airtable base. Three independent workflows:
 
-1. **CSV Import** — Download a Peloton workout CSV export and upsert it into Airtable. This is the primary, day-to-day workflow.
-2. **Class Scraper** — Scrape class metadata (segments, zone allocations, description) from the Peloton website using a saved browser session.
+1. **Automated Claude MCP Sync** — Drop a CSV in `~/Downloads`; a launchd watcher auto-copies it and syncs to Airtable via Claude Code's Airtable MCP integration. No API key setup required.
+2. **Python CSV Import** — Download a Peloton workout CSV and run the Python import script directly. Requires an Airtable personal access token in `~/.env`.
+3. **Class Scraper** — Scrape class metadata (segments, zone allocations, description) from the Peloton website using a saved browser session.
+
+---
+
+## Credentials and API Keys
+
+| Workflow | What's needed | Where it lives |
+|---|---|---|
+| Automated Claude MCP Sync | Nothing — Airtable auth is handled by the claude.ai MCP integration built into Claude Code | N/A |
+| Python CSV Import | `AIRTABLE_TOKEN` (Airtable personal access token) | `~/.env` (never committed) |
+| Class Scraper | `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `~/.env` (never committed) |
+
+Nothing sensitive is hardcoded in any script.
 
 ---
 
@@ -11,11 +24,14 @@ Tools for syncing Peloton workout data into an Airtable base. Two independent wo
 
 ```
 sync-peloton-airtable/
-├── peloton-sync.sh                  # Entry point for the CSV import workflow
+├── peloton-claude-sync.sh           # Claude MCP sync entry point (used by launchd)
+├── peloton-sync.sh                  # Python-based CSV import entry point
 ├── Peloton_Airtable_Import.py       # Reads CSV, upserts records into Airtable
 ├── Peloton_Dedup.py                 # Removes duplicate records from Airtable
 ├── requirements.txt                 # Python dependencies
 ├── .env.example                     # Template showing required env vars
+├── launchd/
+│   └── com.rickarmbrust.peloton-sync.plist  # macOS LaunchAgent for folder watching
 └── scraper/
     ├── peloton_login_save_session.py      # Run once to authenticate and save session
     ├── peloton_class_scrape_stateful.py   # Scrapes class metadata using saved session
@@ -90,7 +106,109 @@ A browser window will open. Log into Peloton, then press Enter in the terminal. 
 
 ---
 
-## Workflow 1: CSV Import
+## Workflow 1: Automated Claude MCP Sync
+
+This is the preferred day-to-day workflow. It requires no API keys and runs automatically when you drop a new Peloton CSV in your Downloads folder.
+
+### How it works
+
+1. You download a Peloton workout CSV from [members.onepeloton.com](https://members.onepeloton.com) → Profile → Workout History → Download. The file will be named `Big__Cheese_workouts*.csv`.
+2. The launchd watcher fires when any file changes in `~/Downloads`.
+3. The script scans Downloads for `Big__Cheese_workouts*.csv`, copies any new file to `~/Library/Mobile Documents/com~apple~CloudDocs/kb/health-data`, then syncs to Airtable via Claude Code.
+4. Airtable deduplication skips any workout already in the table — re-runs are always safe.
+
+### Prerequisites
+
+- [Claude Code](https://claude.ai/code) installed at `~/.local/bin/claude`
+- The claude.ai Airtable MCP integration enabled in Claude Code (handles all Airtable auth)
+
+### Setup (one time)
+
+1. Copy the script to `~/scripts/`:
+
+```bash
+cp peloton-claude-sync.sh ~/scripts/peloton-sync.sh
+chmod +x ~/scripts/peloton-sync.sh
+mkdir -p ~/scripts/logs
+```
+
+2. Install the LaunchAgent:
+
+```bash
+cp launchd/com.rickarmbrust.peloton-sync.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
+```
+
+3. Verify it's registered:
+
+```bash
+launchctl list | grep peloton
+# Should show: -  0  com.rickarmbrust.peloton-sync
+```
+
+### Running manually
+
+```bash
+# Quick update — only processes workouts from the past 7 days (default)
+~/scripts/peloton-sync.sh
+
+# Full historical update — processes all rows in the CSV
+~/scripts/peloton-sync.sh --full
+```
+
+### What it does
+
+- **Downloads watcher**: on each trigger, scans `~/Downloads` for `Big__Cheese_workouts*.csv` and copies any file not already in the health-data folder
+- **Change detection**: uses a state file (`~/scripts/logs/peloton-sync-state`) to track the last-synced CSV modification time — skips the sync entirely if nothing has changed, preventing spurious runs from unrelated Downloads activity
+- **Quick mode** (default): filters CSV to the past 7 days before querying Airtable
+- **Deduplication**: queries all existing `Workout_timestamp` values in Airtable and skips rows already present
+- **Field mapping**: maps CSV columns to Airtable fields, divides `Avg. Resistance` by 100, infers `PowerZone-Type` from the class title
+- **Logging**: writes timestamped entries to `~/scripts/logs/peloton-sync.log`; on success logs the full CSV path, on failure logs the exit code and last output lines
+
+### Logs
+
+| File | Contents |
+|---|---|
+| `~/scripts/logs/peloton-sync.log` | Timestamped run log — success/failure, CSV path, copy events |
+| `~/Library/Logs/peloton-sync-stdout.log` | Raw stdout from launchd |
+| `~/Library/Logs/peloton-sync-stderr.log` | Raw stderr from launchd |
+
+### Field mapping reference
+
+| CSV Column | Airtable Field | Notes |
+|---|---|---|
+| Workout Timestamp | `Workout_timestamp` | Dedup key |
+| Live/On-Demand | `Live_OnDemand` | Single select |
+| Length (minutes) | `Length` | Numeric |
+| Fitness Discipline | `FitnessDiscipline` | Single select |
+| Title | `Title` | Text; also used to infer `PowerZone-Type` |
+| Class Timestamp | `ClassTimestampString` | Text |
+| Total Output | `TotalOutput` | Number |
+| Avg. Watts | `AvgWatts` | Number |
+| Avg. Resistance | `AvgResistance` | Divided by 100 (e.g. `43%` → `0.43`) |
+| Avg. Cadence (RPM) | `AvgCadence` | Number |
+| Avg. Speed (mph) | `AvgSpeed` | Number |
+| Distance (mi) | `Distance` | Number |
+| Calories Burned | `CaloriesBurned` | Number |
+| Avg. Heartrate | `AvgHeartrate` | Number |
+| Avg. Incline | `AvgIncline` | Text |
+
+Skipped columns (linked-record or formula fields): `Instructor Name`, `Type`, `Avg. Pace (min/mi)`, `PK_WorkoutTimestamp`, `AvgPace`, `OutputPerMinute`, `Calculation`, `TotalTimeInZones_min`, `Timestamp`, `Weeknum`, `Weeknum-lookup-string`, `L_Weeks`, `FTP-at-Time`.
+
+Blank or zero metric fields are omitted from the insert rather than written as `0` or `null`.
+
+### PowerZone-Type inference
+
+| Title contains | `PowerZone-Type` value |
+|---|---|
+| "Power Zone Endurance" | `PZE` |
+| "Power Zone Max" | `PZ Max` |
+| "Power Zone" (not Endurance or Max) | `PZ` |
+| Anything else | `Non-PZ` |
+
+---
+
+## Workflow 2: Python CSV Import
 
 ### How it works
 
@@ -142,7 +260,7 @@ Keeps the most recently created record for each `Workout_timestamp` and deletes 
 
 ---
 
-## Workflow 2: Class Scraper
+## Workflow 3: Class Scraper
 
 ### How it works
 
@@ -227,5 +345,4 @@ A few known gaps and natural next steps:
 
 - **Peloton ↔ Peloton-Rides matching** — `Peloton_Airtable_Import.py` notes this is not yet implemented. After import, workout records aren't yet linked to ride/class records.
 - **Scraper → Airtable integration** — The scraper currently outputs JSON to stdout. There's no script yet that takes scraper output and writes it into an Airtable table.
-- **Automation** — The CSV import is currently manual (download CSV, run script). A launchd job or cron could automate this if Peloton ever exposes a proper API or if the scraper is extended to pull workout history directly.
 - **Instructor aliases** — `INSTRUCTOR_NAME_ALIASES` in `Peloton_Airtable_Import.py` maps Peloton CSV names to Airtable instructor names. Add entries there if new mismatches appear in the import warnings.

@@ -126,18 +126,38 @@ When done, report:
 - Any failures and why
 PROMPT
 
-/Users/rick/.local/bin/claude -p "$(cat "$PROMPT_FILE")" \
-  --allowedTools "Read,Bash,mcp__claude_ai_Airtable__list_records_for_table,mcp__claude_ai_Airtable__create_records_for_table,mcp__claude_ai_Airtable__list_tables_for_base,mcp__claude_ai_Airtable__get_table_schema" \
-  2>&1 | tee -a "$LOG_FILE" | tee "$TMPOUT"
+CLAUDE_ARGS=(
+  --allowedTools "Read,Bash,mcp__claude_ai_Airtable__list_records_for_table,mcp__claude_ai_Airtable__create_records_for_table,mcp__claude_ai_Airtable__list_tables_for_base,mcp__claude_ai_Airtable__get_table_schema"
+)
 
-rm -f "$PROMPT_FILE"
+# Retry up to 3 times on rate limit, with exponential backoff (15s, 30s, 60s)
+MAX_ATTEMPTS=3
+ATTEMPT=0
+CLAUDE_EXIT=1
+while [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; do
+    ATTEMPT=$(( ATTEMPT + 1 ))
+    [[ $ATTEMPT -gt 1 ]] && log "Retry attempt $ATTEMPT of $MAX_ATTEMPTS..."
 
-CLAUDE_EXIT=${PIPESTATUS[0]}
-CLAUDE_OUTPUT=$(cat "$TMPOUT")
-rm -f "$TMPOUT"
+    /Users/rick/.local/bin/claude -p "$(cat "$PROMPT_FILE")" "${CLAUDE_ARGS[@]}" \
+        2>&1 | tee -a "$LOG_FILE" | tee "$TMPOUT"
+
+    CLAUDE_EXIT=${PIPESTATUS[0]}
+    CLAUDE_OUTPUT=$(cat "$TMPOUT")
+
+    # Check for rate limit in output; if not present, don't retry
+    if echo "$CLAUDE_OUTPUT" | grep -qi "rate limit"; then
+        WAIT=$(( 15 * ATTEMPT ))
+        log "Rate limit hit — waiting ${WAIT}s before retry..."
+        sleep "$WAIT"
+    else
+        break
+    fi
+done
+
+rm -f "$PROMPT_FILE" "$TMPOUT"
 
 # ── Step 6: Log result ────────────────────────────────────────────────────────
-if [[ $CLAUDE_EXIT -eq 0 ]]; then
+if [[ $CLAUDE_EXIT -eq 0 ]] && ! echo "$CLAUDE_OUTPUT" | grep -qi "rate limit"; then
     log_success "CSV: $NEWEST_CSV"
     echo "$CSV_MTIME" > "$STATE_FILE"
 else

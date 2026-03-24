@@ -57,8 +57,14 @@ else
 fi
 
 # ── Step 5: Run Claude sync ───────────────────────────────────────────────────
+# Write the prompt to a temp file to avoid bash quote-parsing issues with
+# heredocs nested inside "$(…)" — single quotes and special chars in the
+# prompt text or in expanded variables (e.g. CSV paths with spaces/parens)
+# confuse the bash parser when using that pattern.
+PROMPT_FILE=$(mktemp)
 TMPOUT=$(mktemp)
-/Users/rick/.local/bin/claude -p "$(cat <<PROMPT
+
+cat > "$PROMPT_FILE" <<PROMPT
 Sync my Peloton workouts from CSV to Airtable.
 
 MODE: $MODE_INSTRUCTION
@@ -86,7 +92,7 @@ Read the CSV at the path above. Map columns to Airtable fields:
 | Class Timestamp | ClassTimestampString | Text |
 | Total Output | TotalOutput | Number |
 | Avg. Watts | AvgWatts | Number |
-| Avg. Resistance | AvgResistance | Divide by 100 (e.g. 43% → 0.43) |
+| Avg. Resistance | AvgResistance | Divide by 100 (e.g. 43% -> 0.43) |
 | Avg. Cadence (RPM) | AvgCadence | Number |
 | Avg. Speed (mph) | AvgSpeed | Number |
 | Distance (mi) | Distance | Number |
@@ -104,13 +110,13 @@ If a CSV cell is blank or 0 for a metric field (watts, HR, resistance, etc.), om
 
 ### Step 4 — PowerZone-Type field
 Infer from Title:
-- Contains "Power Zone Endurance" → PZE
-- Contains "Power Zone Max" → PZ Max
-- Contains "Power Zone" but not "Endurance" or "Max" → PZ
-- No Power Zone in title → Non-PZ
+- Contains "Power Zone Endurance" -> PZE
+- Contains "Power Zone Max" -> PZ Max
+- Contains "Power Zone" but not "Endurance" or "Max" -> PZ
+- No Power Zone in title -> Non-PZ
 
 ### Step 5 — Insert
-Use the Airtable MCP Server tools for all writes. Insert in small batches (10–20 rows at a time). Surface any failures immediately.
+Use the Airtable MCP Server tools for all writes. Insert in small batches (10-20 rows at a time). Surface any failures immediately.
 
 ### Step 6 — Report
 When done, report:
@@ -119,9 +125,12 @@ When done, report:
 - Rows inserted
 - Any failures and why
 PROMPT
-)" \
+
+/Users/rick/.local/bin/claude -p "$(cat "$PROMPT_FILE")" \
   --allowedTools "Read,Bash,mcp__claude_ai_Airtable__list_records_for_table,mcp__claude_ai_Airtable__create_records_for_table,mcp__claude_ai_Airtable__list_tables_for_base,mcp__claude_ai_Airtable__get_table_schema" \
   2>&1 | tee -a "$LOG_FILE" | tee "$TMPOUT"
+
+rm -f "$PROMPT_FILE"
 
 CLAUDE_EXIT=${PIPESTATUS[0]}
 CLAUDE_OUTPUT=$(cat "$TMPOUT")

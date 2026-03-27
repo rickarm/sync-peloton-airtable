@@ -10,11 +10,13 @@ BASE_ID="appBmQA2p3z2Fdofa"
 TABLE_ID="tblBuzhfztfwgE59f"
 DRY_RUN=""
 CSV_PATH=""
+RECENT_ARG=""
 
 # Parse args
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN="--dry-run" ;;
+    --recent=*) RECENT_ARG="--recent ${arg#--recent=}" ;;
     *) CSV_PATH="$arg" ;;
   esac
 done
@@ -71,4 +73,5 @@ exec python3 "$PYTHON_SCRIPT" \
   --table-id "$TABLE_ID" \
   --csv "$CSV_PATH" \
   ${DRY_RUN:-} \
-  ${TOKEN_ARG:-}
+  ${TOKEN_ARG:-} \
+  ${RECENT_ARG:-}

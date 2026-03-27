@@ -521,6 +521,7 @@ def main() -> int:
     parser.add_argument("--table-id", default="tblBuzhfztfwgE59f", help="Airtable table ID for Peloton")
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var")
     parser.add_argument("--dry-run", action="store_true", help="Parse and print the first record payload, but do not write to Airtable")
+    parser.add_argument("--recent", type=int, default=None, metavar="N", help="Only process the N most recent workouts from the CSV")
     args = parser.parse_args()
 
     if not args.token and not args.dry_run:
@@ -532,6 +533,16 @@ def main() -> int:
         return 2
 
     raw_rows = load_csv_rows(args.csv)
+
+    if args.recent is not None:
+        ts_aliases = CSV_ALIASES["Workout_timestamp"] + ["Workout_timestamp"]
+        def _get_ts(row):
+            for alias in ts_aliases:
+                if alias in row:
+                    return row[alias]
+            return ""
+        raw_rows = sorted(raw_rows, key=_get_ts, reverse=True)[:args.recent]
+        print(f"Trimmed CSV to {len(raw_rows)} most recent workouts.")
 
     stats = ImportStats(rows_read=len(raw_rows))
     airtable_field_records: List[Dict[str, Any]] = []

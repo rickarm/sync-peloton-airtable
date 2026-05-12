@@ -83,6 +83,7 @@ Airtable tables:
 
 ## Gotchas
 
+- No venv in this project — scripts use `/opt/homebrew/bin/python3` directly (`requests` is installed system-wide)
 - Resistance values from CSV must be divided by 100 (45 → 0.45)
 - Scraper session cookies expire (days/weeks) — re-run login script
 - `peloton-sync.sh` also exists in `~/scripts/` — keep both in sync

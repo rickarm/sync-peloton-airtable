@@ -37,8 +37,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
@@ -151,7 +150,6 @@ def airtable_request(
     params: Optional[Dict] = None,
     max_retries: int = 5,
 ) -> Any:
-    import requests as _requests
     backoff = 1.0
     resp = None
     for _ in range(max_retries):
@@ -228,7 +226,7 @@ def upsert_readings(
         "Content-Type": "application/json",
     })
 
-    print(f"Fetching existing records...", file=sys.stderr)
+    print("Fetching existing records...", file=sys.stderr)
     existing = fetch_existing_dates(session, base_id, table_id)
     print(f"Found {len(existing)} existing records.", file=sys.stderr)
 

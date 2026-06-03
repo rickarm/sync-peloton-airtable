@@ -454,7 +454,7 @@ def upsert_records(
         }
     )
 
-    eprint(f"Fetching existing records to build merge map...")
+    eprint("Fetching existing records to build merge map...")
     existing = fetch_existing_records(session, base_id, table_id)
     eprint(f"Found {len(existing)} existing records in Airtable.")
 

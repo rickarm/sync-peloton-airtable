@@ -25,6 +25,31 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 - Run: `./peloton-sync.sh [csv_path]` or auto-detect from Downloads
 - Dry-run: `./peloton-sync.sh --dry-run`
 - Requires: `AIRTABLE_TOKEN` in `~/.env`
+- After a successful (non-dry-run) import it auto-runs the matcher (Workflow 2b).
+
+### Workflow 2b: Workout ↔ Class Matching
+Links **Peloton** workout rows to their **Peloton-Rides** class metadata
+(`LinkedRide`) so each workout inherits the class's Power Zone breakdown.
+Standalone port of the former in-app Airtable Scripting extension — runnable by
+agents (e.g. Mandy) without the Airtable UI.
+
+- Run: `./peloton-match.sh` (or `Peloton_Match.py` directly)
+- Dry-run (compute + report, no writes): `./peloton-match.sh --dry-run`
+- Faster (skip locked): `./peloton-match.sh --unlinked-only`
+- Limit scope: `./peloton-match.sh --recent N`
+- Requires: `AIRTABLE_TOKEN` in `~/.env` — **needed even for `--dry-run`** (the
+  matcher reads live data to score).
+- Behavior: always writes `MatchScore`; auto-links (`LinkedRide`) + sets
+  `MatchLock` when an unlinked, unlocked workout has a confident, unambiguous
+  best match (score ≥ 80); locks already-linked rows; never re-links a locked
+  row. Idempotent.
+- Scoring/threshold details live in `README.md` (Workflow 2b) and the
+  `Peloton_Match.py` docstring.
+
+**How Mandy/agents run this:** when asked to "run the Peloton matcher" or after
+a CSV import, run `./peloton-match.sh --dry-run` first, sanity-check the JSON
+summary (especially `auto_matched` and `ambiguous`), then run `./peloton-match.sh`
+to commit. Report the JSON summary back.
 
 ### Workflow 3: Class Scraper
 - Login: `python scraper/peloton_login_save_session.py` (one-time)
@@ -61,8 +86,10 @@ python Weight_Airtable_Import.py --input /path/to/HealthAutoExport-2026.json
 
 ```
 peloton-claude-sync.sh                  # Workflow 1: MCP-based sync
-peloton-sync.sh                         # Workflow 2: wrapper script
+peloton-sync.sh                         # Workflow 2: wrapper script (runs matcher after import)
 Peloton_Airtable_Import.py              # Workflow 2: direct Airtable API import
+peloton-match.sh                        # Workflow 2b: matcher wrapper (agent-runnable)
+Peloton_Match.py                        # Workflow 2b: links workouts → Peloton-Rides
 Peloton_Dedup.py                        # Dedup utility
 Weight_Airtable_Import.py              # Weight/body-fat sync (Withings)
 scraper/
@@ -78,6 +105,8 @@ Credentials in `~/.env` (home dir, NOT repo):
 
 Airtable tables:
 - `tblBuzhfztfwgE59f` — Peloton workouts
+- `tblht11eg2nJ5gh3o` — Peloton-Rides (class metadata; matcher target)
+- `tblcUCbRTQbN6B4uK` — Peloton_type lookup (matcher Power Zone hint)
 - `tblNVTKvAwzrDOqxM` — Weight (Withings)
 - `tbltRUHnRrncwUbnQ` — Instructor lookup
 
@@ -88,4 +117,13 @@ Airtable tables:
 - Scraper session cookies expire (days/weeks) — re-run login script
 - `peloton-sync.sh` also exists in `~/scripts/` — keep both in sync
 - PowerZone type inference from class title: "Power Zone Endurance" → PZE, etc.
+- Matcher (`Peloton_Match.py`) reads via the REST API, which returns linked-record
+  fields (`InstructorName`, `Instructor`, `Type`) as arrays of **record IDs**, not
+  `{name}` objects like the in-app `getCellValue`. Instructors are compared by
+  linked record ID (both tables link the same `Peloton_Instructor` table); `Type`
+  names are resolved via a `Peloton_type` lookup map for the Power Zone hint.
+- Matcher dates: `ClassTimestampDate` / `ClassTimeDate` are formula fields that
+  return **date-only** strings (`"2026-04-17"`) via REST; the matcher parses these
+  (preferred) and falls back to `ClassTimestampString` text. Timezone suffixes
+  (`(-07)`, `(PDT)`) are stripped before parsing.
 - Weight iCloud files: many per-date files are iCloud stubs not downloaded locally; the annual aggregate files (e.g. `HealthAutoExport-2026.json`) are the reliable source

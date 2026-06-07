@@ -1,5 +1,7 @@
 # Peloton Scraper
 
+> **Status: superseded.** Workout-URL scraping now lives in the [`peloton-workout-extract`](https://github.com/rickarm/peloton-workout-extract) project. This folder is retained as reference for **class-URL** scraping (scraping a class before it has been taken), tracked in [issue #4](https://github.com/rickarm/peloton-workout-extract/issues/4). Do not delete without checking that issue.
+
 A small Playwright-based script for pulling Peloton class metadata from a Peloton class or workout URL.
 
 ## What this does

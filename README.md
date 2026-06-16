@@ -326,9 +326,15 @@ below 90 (in that case it only scores).
 ### Output
 
 A JSON summary on stdout (aggregate counts plus a `rows` table — one entry per
-workout, **newest first**, with `date`, `title`, `action`, `score`, `ride`); a
-matching per-workout action log on stderr (each row prefixed with the workout
-date so repeated titles are distinguishable):
+workout, **newest-taken first**); a matching per-workout action log on stderr.
+
+Two dates appear per row, and the distinction matters:
+
+- **`taken`** — when *you did* the workout (`Workout_timestamp`). This drives the
+  sort and is what "recent rides" means.
+- **`class_date`** — when the *class aired* (`ClassTimestampString`). This is the
+  actual match key against Peloton-Rides, so a recently-taken ride can map to an
+  old class.
 
 ```json
 {
@@ -346,7 +352,8 @@ date so repeated titles are distinguishable):
   "dry_run": false,
   "rows": [
     {
-      "date": "2026-04-17 07:00 (-07)",
+      "taken": "2026-06-08 17:35 (-07)",
+      "class_date": "2026-04-21 21:00 (-07)",
       "title": "45 min Power Zone Endurance Ride",
       "action": "auto-matched, locked",
       "score": 120,

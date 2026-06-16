@@ -82,8 +82,9 @@ MAX_TIME_WINDOW_HOURS = 24
 P_LINKED_RIDE = "LinkedRide"
 P_MATCH_LOCK = "MatchLock"
 P_MATCH_SCORE = "MatchScore"
-P_CLASS_TS_STRING = "ClassTimestampString"
-P_CLASS_TS_DATE = "ClassTimestampDate"
+P_WORKOUT_TS = "Workout_timestamp"          # when the workout was actually done
+P_CLASS_TS_STRING = "ClassTimestampString"  # when the class aired (the match key)
+P_CLASS_TS_DATE = "ClassTimestampDate"      # formula date of the class air time
 P_TITLE = "Title"
 P_INSTRUCTOR = "InstructorName"
 P_LENGTH = "Length"
@@ -91,7 +92,7 @@ P_DISCIPLINE = "FitnessDiscipline"
 P_TYPE = "Type"
 
 PELOTON_FIELDS = [
-    P_LINKED_RIDE, P_MATCH_LOCK, P_MATCH_SCORE, P_CLASS_TS_STRING,
+    P_LINKED_RIDE, P_MATCH_LOCK, P_MATCH_SCORE, P_WORKOUT_TS, P_CLASS_TS_STRING,
     P_CLASS_TS_DATE, P_TITLE, P_INSTRUCTOR, P_LENGTH, P_DISCIPLINE, P_TYPE,
 ]
 
@@ -416,18 +417,23 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
     eprint(f"Loaded {len(workout_recs)} workouts, {len(rides)} rides, "
            f"{len(type_map)} types.")
 
-    # Resolve a workout date for sorting/filtering once.
-    def workout_date(rec: Dict[str, Any]) -> Optional[datetime]:
+    # Two distinct dates per workout:
+    #  - match_date: when the CLASS aired — the join key against Peloton-Rides.
+    #  - taken_date: when YOU did the workout — what "recent" means for review.
+    def match_date(rec: Dict[str, Any]) -> Optional[datetime]:
         f = rec.get("fields", {})
         return parse_date_safe(f.get(P_CLASS_TS_DATE)) or parse_date_safe(f.get(P_CLASS_TS_STRING))
 
-    # Process newest-first so the log and JSON rows read most-recent first.
-    # Undated workouts sort to the end.
-    workout_recs.sort(key=lambda r: workout_date(r) or datetime.min, reverse=True)
+    def taken_date(rec: Dict[str, Any]) -> Optional[datetime]:
+        return parse_date_safe(rec.get("fields", {}).get(P_WORKOUT_TS))
+
+    # Process newest-*taken* first, so the log and JSON rows match the user's
+    # sense of "recent rides" (recently imported). Undated workouts sort last.
+    workout_recs.sort(key=lambda r: taken_date(r) or datetime.min, reverse=True)
 
     if recent is not None:
-        workout_recs = [r for r in workout_recs if workout_date(r) is not None][:recent]
-        eprint(f"--recent {recent}: limited to {len(workout_recs)} most-recent workouts.")
+        workout_recs = [r for r in workout_recs if taken_date(r) is not None][:recent]
+        eprint(f"--recent {recent}: limited to {len(workout_recs)} most-recently-taken workouts.")
 
     updates: List[Dict[str, Any]] = []
     rows: List[Dict[str, Any]] = []  # per-workout table for the JSON output
@@ -446,10 +452,10 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         f = rec.get("fields", {})
         rec_id = rec["id"]
         title = as_string(f, P_TITLE) or rec_id
-        # When the workout was taken — shown in the log to disambiguate repeated
-        # titles. Prefer the full timestamp string (has time + tz); fall back to
-        # the formula date (date-only).
-        when = as_string(f, P_CLASS_TS_STRING) or as_string(f, P_CLASS_TS_DATE) or "no date"
+        # taken = when YOU did the ride (disambiguates repeated titles, drives the
+        # sort). class_when = when the class aired (the actual match key).
+        taken = as_string(f, P_WORKOUT_TS) or "no workout date"
+        class_when = as_string(f, P_CLASS_TS_STRING) or as_string(f, P_CLASS_TS_DATE) or "no class date"
         has_link = bool(linked_ids(f, P_LINKED_RIDE))
         locked = bool(f.get(P_MATCH_LOCK))
 
@@ -459,12 +465,12 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
 
         counts["workouts_processed"] += 1
 
-        wdate = workout_date(rec)
+        wdate = match_date(rec)
         if wdate is None:
             counts["missing_date"] += 1
-            rows.append({"date": when, "title": title, "action": "missing date",
-                         "score": None, "ride": ""})
-            eprint(f"  [missing date] {when} | {title}")
+            rows.append({"taken": taken, "class_date": class_when, "title": title,
+                         "action": "missing class date", "score": None, "ride": ""})
+            eprint(f"  [missing class date] taken {taken} | {title}")
             continue
 
         best, second = find_best_candidates(f, wdate, type_map, rides)
@@ -476,9 +482,9 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
                 counts["locked"] += 1
             counts["no_candidate"] += 1
             updates.append({"id": rec_id, "fields": fields})
-            rows.append({"date": when, "title": title, "action": "no candidate",
-                         "score": None, "ride": ""})
-            eprint(f"  [no candidate] {when} | {title}")
+            rows.append({"taken": taken, "class_date": class_when, "title": title,
+                         "action": "no candidate", "score": None, "ride": ""})
+            eprint(f"  [no candidate] taken {taken} | {title} (class {class_when})")
             continue
 
         ambiguous = (
@@ -514,10 +520,10 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             counts["scored_only"] += 1
 
         updates.append({"id": rec_id, "fields": fields})
-        rows.append({"date": when, "title": title, "action": action,
-                     "score": best["score"], "ride": best["ride_title"]})
-        eprint(f"  [{action}] {when} | {title} -> {best['ride_title']} "
-               f"(score {best['score']}; {'; '.join(best['reasons'])})")
+        rows.append({"taken": taken, "class_date": class_when, "title": title,
+                     "action": action, "score": best["score"], "ride": best["ride_title"]})
+        eprint(f"  [{action}] taken {taken} | {title} -> {best['ride_title']} "
+               f"(class {class_when}; score {best['score']}; {'; '.join(best['reasons'])})")
 
     # Write
     api_errors = 0
@@ -542,7 +548,9 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         "batches_sent": batches_sent,
         "api_errors": api_errors,
         "dry_run": dry_run,
-        "rows": rows,  # per-workout table (newest first): date, title, action, score, ride
+        # per-workout table, newest-taken first: taken (workout date), class_date
+        # (class air time = match key), title, action, score, ride
+        "rows": rows,
     }
     return summary
 

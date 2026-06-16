@@ -101,9 +101,13 @@ because scores are read from live Airtable data.
 Runs automatically after `peloton-sync.sh` import. Flags pass straight through
 to `Peloton_Match.py`.
 
-**Output:** JSON summary on stdout (aggregate counts + a `rows` table, newest
-first, with `date`/`title`/`action`/`score`/`ride`); per-workout action log on
-stderr (each line prefixed with the workout date).
+**Output:** JSON summary on stdout (aggregate counts + a `rows` table, sorted
+newest-*taken* first); per-workout action log on stderr.
+
+Each row carries two dates: **`taken`** = when you did the workout
+(`Workout_timestamp`, drives the sort = "recent rides"), and **`class_date`** =
+when the class aired (`ClassTimestampString`, the actual match key — a recent
+ride can map to an old class).
 
 ```json
 {
@@ -118,8 +122,9 @@ stderr (each line prefixed with the workout date).
   "api_errors": 0,
   "dry_run": false,
   "rows": [
-    {"date": "2026-04-17 07:00 (-07)", "title": "45 min Power Zone Endurance Ride",
-     "action": "auto-matched, locked", "score": 120, "ride": "45 min Power Zone Endurance Ride"}
+    {"taken": "2026-06-08 17:35 (-07)", "class_date": "2026-04-21 21:00 (-07)",
+     "title": "45 min Power Zone Endurance Ride", "action": "auto-matched, locked",
+     "score": 120, "ride": "45 min Power Zone Endurance Ride"}
   ]
 }
 ```

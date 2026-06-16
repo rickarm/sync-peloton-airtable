@@ -101,7 +101,9 @@ because scores are read from live Airtable data.
 Runs automatically after `peloton-sync.sh` import. Flags pass straight through
 to `Peloton_Match.py`.
 
-**Output:** JSON summary on stdout, per-workout action log on stderr.
+**Output:** JSON summary on stdout (aggregate counts + a `rows` table, newest
+first, with `date`/`title`/`action`/`score`/`ride`); per-workout action log on
+stderr (each line prefixed with the workout date).
 
 ```json
 {
@@ -114,9 +116,16 @@ to `Peloton_Match.py`.
   "updates_prepared": 312,
   "batches_sent": 32,
   "api_errors": 0,
-  "dry_run": false
+  "dry_run": false,
+  "rows": [
+    {"date": "2026-04-17 07:00 (-07)", "title": "45 min Power Zone Endurance Ride",
+     "action": "auto-matched, locked", "score": 120, "ride": "45 min Power Zone Endurance Ride"}
+  ]
 }
 ```
+
+The `rows` table is the easy way to scan results — e.g. pipe to `jq` to see just
+the auto-matches: `./peloton-match.sh --dry-run | jq '.rows[] | select(.action | startswith("auto-matched"))'`
 
 ---
 

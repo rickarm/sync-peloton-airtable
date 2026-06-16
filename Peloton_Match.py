@@ -421,14 +421,16 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         f = rec.get("fields", {})
         return parse_date_safe(f.get(P_CLASS_TS_DATE)) or parse_date_safe(f.get(P_CLASS_TS_STRING))
 
+    # Process newest-first so the log and JSON rows read most-recent first.
+    # Undated workouts sort to the end.
+    workout_recs.sort(key=lambda r: workout_date(r) or datetime.min, reverse=True)
+
     if recent is not None:
-        dated = [(workout_date(r), r) for r in workout_recs]
-        dated = [(d, r) for d, r in dated if d is not None]
-        dated.sort(key=lambda x: x[0], reverse=True)
-        workout_recs = [r for _, r in dated[:recent]]
+        workout_recs = [r for r in workout_recs if workout_date(r) is not None][:recent]
         eprint(f"--recent {recent}: limited to {len(workout_recs)} most-recent workouts.")
 
     updates: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []  # per-workout table for the JSON output
     counts = {
         "workouts_processed": 0,
         "auto_matched": 0,
@@ -460,6 +462,8 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         wdate = workout_date(rec)
         if wdate is None:
             counts["missing_date"] += 1
+            rows.append({"date": when, "title": title, "action": "missing date",
+                         "score": None, "ride": ""})
             eprint(f"  [missing date] {when} | {title}")
             continue
 
@@ -472,6 +476,8 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
                 counts["locked"] += 1
             counts["no_candidate"] += 1
             updates.append({"id": rec_id, "fields": fields})
+            rows.append({"date": when, "title": title, "action": "no candidate",
+                         "score": None, "ride": ""})
             eprint(f"  [no candidate] {when} | {title}")
             continue
 
@@ -508,6 +514,8 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             counts["scored_only"] += 1
 
         updates.append({"id": rec_id, "fields": fields})
+        rows.append({"date": when, "title": title, "action": action,
+                     "score": best["score"], "ride": best["ride_title"]})
         eprint(f"  [{action}] {when} | {title} -> {best['ride_title']} "
                f"(score {best['score']}; {'; '.join(best['reasons'])})")
 
@@ -534,6 +542,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         "batches_sent": batches_sent,
         "api_errors": api_errors,
         "dry_run": dry_run,
+        "rows": rows,  # per-workout table (newest first): date, title, action, score, ride
     }
     return summary
 

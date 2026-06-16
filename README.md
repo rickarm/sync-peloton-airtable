@@ -325,7 +325,10 @@ below 90 (in that case it only scores).
 
 ### Output
 
-A JSON summary on stdout; a per-workout action log on stderr:
+A JSON summary on stdout (aggregate counts plus a `rows` table — one entry per
+workout, **newest first**, with `date`, `title`, `action`, `score`, `ride`); a
+matching per-workout action log on stderr (each row prefixed with the workout
+date so repeated titles are distinguishable):
 
 ```json
 {
@@ -340,9 +343,21 @@ A JSON summary on stdout; a per-workout action log on stderr:
   "updates_prepared": 312,
   "batches_sent": 32,
   "api_errors": 0,
-  "dry_run": false
+  "dry_run": false,
+  "rows": [
+    {
+      "date": "2026-04-17 07:00 (-07)",
+      "title": "45 min Power Zone Endurance Ride",
+      "action": "auto-matched, locked",
+      "score": 120,
+      "ride": "45 min Power Zone Endurance Ride"
+    }
+  ]
 }
 ```
+
+Tip: filter the table with `jq`, e.g. only the auto-matched rows:
+`./peloton-match.sh --dry-run | jq '.rows[] | select(.action | startswith("auto-matched"))'`
 
 ---
 

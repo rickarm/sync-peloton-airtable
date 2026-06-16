@@ -270,7 +270,10 @@ After workouts are imported into the **Peloton** table, they need to be linked
 (`LinkedRide`) to the matching class in the **Peloton-Rides** table so each
 workout inherits the class's Power Zone duration breakdown. Because the same
 class is taken repeatedly, this is a fuzzy match (instructor, duration, title,
-time proximity, Power Zone type) within a ±24h window — not a single-key join.
+time proximity, Power Zone type) within a ±48h window — not a single-key join.
+The time signal compares the class **air time** from the time-bearing timestamp
+fields (`ClassTimestampString` / `ClassTimestamp`), so same-day look-alike
+classes are separated by when they aired.
 
 This is a standalone port of the former in-app Airtable Scripting extension, so
 any agent (e.g. Mandy) can run it from the command line.

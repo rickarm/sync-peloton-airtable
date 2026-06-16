@@ -122,8 +122,12 @@ Airtable tables:
   `{name}` objects like the in-app `getCellValue`. Instructors are compared by
   linked record ID (both tables link the same `Peloton_Instructor` table); `Type`
   names are resolved via a `Peloton_type` lookup map for the Power Zone hint.
-- Matcher dates: `ClassTimestampDate` / `ClassTimeDate` are formula fields that
-  return **date-only** strings (`"2026-04-17"`) via REST; the matcher parses these
-  (preferred) and falls back to `ClassTimestampString` text. Timezone suffixes
-  (`(-07)`, `(PDT)`) are stripped before parsing.
+- Matcher dates: the match key is the class **air time**, compared from the
+  time-bearing text fields `ClassTimestampString` (workout) / `ClassTimestamp`
+  (ride), e.g. `"2026-04-21 21:00 (-07)"`. The matcher prefers these over the
+  date-only formula fields (`ClassTimestampDate` / `ClassTimeDate`, which return
+  `"2026-04-21"` via REST) — the formula dates lose the time of day and can drift
+  by ±1 day across timezones. Timezone suffixes (`(-07)`, `(PDT)`) are stripped
+  and times compared as wall-clock. Match window is ±48h. (Separately, the
+  log/sort use `Workout_timestamp` = when the workout was *taken*.)
 - Weight iCloud files: many per-date files are iCloud stubs not downloaded locally; the annual aggregate files (e.g. `HealthAutoExport-2026.json`) are the reliable source

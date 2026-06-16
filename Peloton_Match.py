@@ -22,7 +22,13 @@ Peloton-Rides (class metadata) record as a candidate and:
 Linking a workout to its class lets the workout inherit the class's Power Zone
 duration breakdown. Because the same class is taken repeatedly, matching is by
 similarity (instructor, duration, title, time proximity, Power Zone type)
-within a +/- 24h window rather than by a single key.
+within a +/- 48h window rather than by a single key.
+
+The match key is the class's *air time*, compared from the time-bearing text
+fields (ClassTimestampString / ClassTimestamp, e.g. "2026-04-21 21:00 (-07)")
+rather than the date-only formula fields — this preserves the time of day, so
+two same-day look-alike classes are separated by when they aired, and it avoids
+the timezone-induced +/-1 day drift the formula dates can show.
 
 Scoring (mirrors the v3 extension)
 ----------------------------------
@@ -74,9 +80,9 @@ PELOTON_TABLE_ID = "tblBuzhfztfwgE59f"      # Peloton (workout history)
 RIDES_TABLE_ID = "tblht11eg2nJ5gh3o"        # Peloton-Rides (class metadata)
 TYPE_TABLE_ID = "tblcUCbRTQbN6B4uK"         # Peloton_type (for Power Zone hint)
 
-# Thresholds (mirror the extension)
-AUTO_MATCH_THRESHOLD = 80
-MAX_TIME_WINDOW_HOURS = 24
+# Thresholds
+AUTO_MATCH_THRESHOLD = 80          # mirrors the extension
+MAX_TIME_WINDOW_HOURS = 48         # widened from the extension's 24h
 
 # Peloton (workout) field names
 P_LINKED_RIDE = "LinkedRide"
@@ -234,7 +240,9 @@ class Ride:
     def __init__(self, rec: Dict[str, Any]):
         f = rec.get("fields", {})
         self.id = rec["id"]
-        self.date = parse_date_safe(f.get(R_CLASS_TIME_DATE))
+        # Prefer the time-bearing ClassTimestamp (wall-clock with HH:MM); fall
+        # back to the date-only ClassTimeDate formula only if it's missing.
+        self.date = parse_date_safe(f.get(R_CLASS_TIMESTAMP)) or parse_date_safe(f.get(R_CLASS_TIME_DATE))
         self.title = as_string(f, R_RIDE_TITLE)
         self.duration = as_number(f, R_DURATION)
         self.instructor_ids = set(linked_ids(f, R_INSTRUCTOR))
@@ -422,7 +430,9 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
     #  - taken_date: when YOU did the workout — what "recent" means for review.
     def match_date(rec: Dict[str, Any]) -> Optional[datetime]:
         f = rec.get("fields", {})
-        return parse_date_safe(f.get(P_CLASS_TS_DATE)) or parse_date_safe(f.get(P_CLASS_TS_STRING))
+        # Prefer the time-bearing ClassTimestampString; fall back to the
+        # date-only ClassTimestampDate formula only if it's missing.
+        return parse_date_safe(f.get(P_CLASS_TS_STRING)) or parse_date_safe(f.get(P_CLASS_TS_DATE))
 
     def taken_date(rec: Dict[str, Any]) -> Optional[datetime]:
         return parse_date_safe(rec.get("fields", {}).get(P_WORKOUT_TS))

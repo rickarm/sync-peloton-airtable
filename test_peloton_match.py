@@ -86,9 +86,47 @@ def test_weak_match_below_threshold():
 
 
 def test_outside_time_window_rejected():
-    ride = _ride(_id="recRide3", ClassTimeDate="2026-04-19T07:00:00.000Z")  # >24h
+    ride = _ride(_id="recRide3", ClassTimeDate="2026-04-21T07:00:00.000Z")  # 96h > 48h
     res = m.score_match(_workout(), WDATE, TYPE_MAP, ride)
     assert res["score"] == -999, res
+
+
+def test_window_is_48h():
+    assert m.MAX_TIME_WINDOW_HOURS == 48
+    # A ride 40h away is now inside the window (would have been rejected at 24h).
+    ride = _ride(_id="recRide4", ClassTimestamp="2026-04-18 23:00 (-07)")
+    res = m.score_match(_workout(), WDATE, TYPE_MAP, ride)
+    assert res["score"] != -999, res
+
+
+def test_ride_prefers_time_bearing_timestamp():
+    # Ride.date should come from ClassTimestamp (with HH:MM), not the date-only
+    # ClassTimeDate formula — and ignore the timezone suffix (wall-clock).
+    ride = m.Ride({"id": "r", "fields": {
+        "ClassTimestamp": "2026-04-17 21:00 (-04)",
+        "ClassTimeDate": "2026-04-18",  # formula drifted a day; must NOT win
+        "RideTitle": "x", "RideDuration_min": 45, "Instructor": [],
+        "PowerZoneType": "", "ClassID": "c",
+    }})
+    assert ride.date == datetime(2026, 4, 17, 21, 0), ride.date
+
+
+def test_same_day_classes_separated_by_air_time():
+    # Two identical-title/instructor/duration classes on the SAME day: the one
+    # matching the workout's air time must outscore the other.
+    wf = _workout()
+    took_at = datetime(2026, 4, 17, 21, 0)  # took the 21:00 class
+    near = m.Ride({"id": "near", "fields": {
+        "ClassTimestamp": "2026-04-17 21:00 (-04)", "RideTitle": wf["Title"],
+        "RideDuration_min": 45, "Instructor": ["recMattW"],
+        "PowerZoneType": "Power Zone Endurance", "ClassID": "c1"}})
+    far = m.Ride({"id": "far", "fields": {
+        "ClassTimestamp": "2026-04-17 06:00 (-04)", "RideTitle": wf["Title"],
+        "RideDuration_min": 45, "Instructor": ["recMattW"],
+        "PowerZoneType": "Power Zone Endurance", "ClassID": "c2"}})
+    s_near = m.score_match(wf, took_at, TYPE_MAP, near)["score"]
+    s_far = m.score_match(wf, took_at, TYPE_MAP, far)["score"]
+    assert s_near == 120 and s_far == 105, (s_near, s_far)  # +15 vs +0 time bonus
 
 
 def test_instructor_matched_by_record_id():
@@ -105,7 +143,7 @@ def test_candidate_selection_orders_best_then_second():
         RideTitle="30 min Climb Ride", RideDuration_min=30,
         Instructor=["recOther"], PowerZoneType="",
     )
-    out_of_window = _ride(_id="recRide3", ClassTimeDate="2026-04-19T07:00:00.000Z")
+    out_of_window = _ride(_id="recRide3", ClassTimeDate="2026-04-21T07:00:00.000Z")  # 96h
     best, second = m.find_best_candidates(
         _workout(), WDATE, TYPE_MAP, [best_ride, weak_ride, out_of_window]
     )

@@ -444,6 +444,10 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         f = rec.get("fields", {})
         rec_id = rec["id"]
         title = as_string(f, P_TITLE) or rec_id
+        # When the workout was taken — shown in the log to disambiguate repeated
+        # titles. Prefer the full timestamp string (has time + tz); fall back to
+        # the formula date (date-only).
+        when = as_string(f, P_CLASS_TS_STRING) or as_string(f, P_CLASS_TS_DATE) or "no date"
         has_link = bool(linked_ids(f, P_LINKED_RIDE))
         locked = bool(f.get(P_MATCH_LOCK))
 
@@ -456,7 +460,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         wdate = workout_date(rec)
         if wdate is None:
             counts["missing_date"] += 1
-            eprint(f"  [missing date] {title}")
+            eprint(f"  [missing date] {when} | {title}")
             continue
 
         best, second = find_best_candidates(f, wdate, type_map, rides)
@@ -468,7 +472,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
                 counts["locked"] += 1
             counts["no_candidate"] += 1
             updates.append({"id": rec_id, "fields": fields})
-            eprint(f"  [no candidate] {title}")
+            eprint(f"  [no candidate] {when} | {title}")
             continue
 
         ambiguous = (
@@ -504,7 +508,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             counts["scored_only"] += 1
 
         updates.append({"id": rec_id, "fields": fields})
-        eprint(f"  [{action}] {title} -> {best['ride_title']} "
+        eprint(f"  [{action}] {when} | {title} -> {best['ride_title']} "
                f"(score {best['score']}; {'; '.join(best['reasons'])})")
 
     # Write

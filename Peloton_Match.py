@@ -230,6 +230,17 @@ def classify_unlinked(best_score: float, second_score: Optional[float]) -> str:
     return "ambiguous" if ambiguous else "auto-match"
 
 
+def linked_ride_value(ride_id: str) -> List[str]:
+    """Build the LinkedRide write value for the Airtable REST API.
+
+    The REST API expects a linked-record field as an array of record-ID
+    *strings* (e.g. ["rec123"]). The in-app Scripting API uses [{"id": "rec123"}]
+    instead — sending that object form here makes Airtable stringify it to
+    "[object Object]" and return 422 INVALID_RECORD_ID.
+    """
+    return [ride_id]
+
+
 # ── Cell accessors (REST semantics) ────────────────────────────────────────────
 
 def linked_ids(fields: Dict[str, Any], key: str) -> List[str]:
@@ -538,7 +549,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         else:
             decision = classify_unlinked(best["score"], second["score"] if second else None)
             if decision == "auto-match":
-                fields[P_LINKED_RIDE] = [{"id": best["ride_id"]}]
+                fields[P_LINKED_RIDE] = linked_ride_value(best["ride_id"])
                 fields[P_MATCH_LOCK] = True
                 counts["auto_matched"] += 1
                 action = "auto-matched, locked"

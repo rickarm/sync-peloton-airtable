@@ -151,6 +151,14 @@ def test_candidate_selection_orders_best_then_second():
     assert second["ride_id"] == "recRide2"
 
 
+def test_linked_ride_value_is_rest_string_array():
+    # REST API needs ["rec..."], NOT [{"id": "rec..."}] (the Scripting form,
+    # which 422s with "[object Object]" is not a valid record ID).
+    assert m.linked_ride_value("recABC123") == ["recABC123"]
+    val = m.linked_ride_value("recXYZ")
+    assert isinstance(val, list) and isinstance(val[0], str)
+
+
 def test_classify_unlinked():
     # Strong, no close second -> auto-match
     assert m.classify_unlinked(120, 40) == "auto-match"

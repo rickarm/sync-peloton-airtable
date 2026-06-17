@@ -25,8 +25,10 @@ Nothing sensitive is hardcoded in any script.
 ```
 sync-peloton-airtable/
 ├── peloton-claude-sync.sh           # Claude MCP sync entry point (used by launchd)
-├── peloton-sync.sh                  # Python-based CSV import entry point
+├── peloton-sync.sh                  # Python-based CSV import entry point (runs the matcher after import)
+├── peloton-match.sh                 # Workout ↔ class matcher entry point (agent-runnable)
 ├── Peloton_Airtable_Import.py       # Reads CSV, upserts records into Airtable
+├── Peloton_Match.py                 # Links Peloton workouts to Peloton-Rides class metadata
 ├── Peloton_Dedup.py                 # Removes duplicate records from Airtable
 ├── requirements.txt                 # Python dependencies
 ├── .env.example                     # Template showing required env vars
@@ -54,7 +56,9 @@ These IDs are hardcoded in `peloton-sync.sh` and the Python scripts. Update them
 |---|---|
 | Base | `appBmQA2p3z2Fdofa` |
 | Peloton workouts table | `tblBuzhfztfwgE59f` |
+| Peloton-Rides (class metadata) table | `tblht11eg2nJ5gh3o` |
 | Instructor lookup table | `tbltRUHnRrncwUbnQ` |
+| Peloton_type lookup table (matcher) | `tblcUCbRTQbN6B4uK` |
 | Merge key field (Workout_timestamp) | `fldLajy5EBHnICqj2` |
 
 ---
@@ -260,6 +264,116 @@ Keeps the most recently created record for each `Workout_timestamp` and deletes 
 
 ---
 
+## Workflow 2b: Workout ↔ Class Matching
+
+After workouts are imported into the **Peloton** table, they need to be linked
+(`LinkedRide`) to the matching class in the **Peloton-Rides** table so each
+workout inherits the class's Power Zone duration breakdown. Because the same
+class is taken repeatedly, this is a fuzzy match (instructor, duration, title,
+time proximity, Power Zone type) within a ±48h window — not a single-key join.
+The time signal compares the class **air time** from the time-bearing timestamp
+fields (`ClassTimestampString` / `ClassTimestamp`), so same-day look-alike
+classes are separated by when they aired.
+
+This is a standalone port of the former in-app Airtable Scripting extension, so
+any agent (e.g. Mandy) can run it from the command line.
+
+### Running the matcher
+
+```bash
+# Preview — compute scores and report actions, write nothing
+./peloton-match.sh --dry-run
+
+# Score every workout, auto-link confident matches, lock linked records
+./peloton-match.sh
+
+# Faster: skip records that are already locked
+./peloton-match.sh --unlinked-only
+
+# Only the N most-recent workouts
+./peloton-match.sh --recent 10
+```
+
+`peloton-sync.sh` runs `peloton-match.sh` automatically after a successful
+(non-dry-run) import, so a normal CSV sync now also links the new workouts. The
+matcher is best-effort there: if it fails, the import still succeeds.
+
+A token is required even for `--dry-run`, because scores are computed from live
+Airtable data (it reads both tables).
+
+### What the matcher does
+
+For every Peloton workout, it scores every Peloton-Rides record and:
+
+- Always writes `MatchScore` (best candidate's score), so partial matches are visible.
+- Auto-links (`LinkedRide`) **and** sets `MatchLock` when an unlinked, unlocked
+  workout has a confident, unambiguous best match (score ≥ 80).
+- Sets `MatchLock` on records that already have a `LinkedRide`, so a future run
+  never re-links them.
+- Never overwrites a locked record's link. Re-running is safe and idempotent.
+
+### Scoring
+
+| Signal | Points |
+|---|---|
+| Instructor exact (by linked record ID) | +40 |
+| Duration exact / within 1 min | +25 / +12 |
+| Title similarity ≥.95 / ≥.75 / ≥.5 | +30 / +22 / +12 |
+| Time proximity ≤1h / ≤3h / ≤12h | +15 / +10 / +5 |
+| Power Zone hint exact / family | +10 / +5 |
+
+Auto-match threshold is **80**, with an ambiguity guard: it will not auto-link
+if the second-best candidate is within 5 points of the best and the best is
+below 90 (in that case it only scores). The guard only applies at/above the
+threshold — a workout whose best is below 80 is reported as `score too low`, not
+`ambiguous`, so the `ambiguous` count reflects only genuine high-confidence ties
+worth a human look (not low-score noise, which grows with a wider time window).
+
+### Output
+
+A JSON summary on stdout (aggregate counts plus a `rows` table — one entry per
+workout, **newest-taken first**); a matching per-workout action log on stderr.
+
+Two dates appear per row, and the distinction matters:
+
+- **`taken`** — when *you did* the workout (`Workout_timestamp`). This drives the
+  sort and is what "recent rides" means.
+- **`class_date`** — when the *class aired* (`ClassTimestampString`). This is the
+  actual match key against Peloton-Rides, so a recently-taken ride can map to an
+  old class.
+
+```json
+{
+  "workouts_processed": 312,
+  "auto_matched": 8,
+  "locked": 14,
+  "scored_only": 290,
+  "ambiguous": 2,
+  "no_candidate": 6,
+  "missing_date": 0,
+  "skipped_locked": 0,
+  "updates_prepared": 312,
+  "batches_sent": 32,
+  "api_errors": 0,
+  "dry_run": false,
+  "rows": [
+    {
+      "taken": "2026-06-08 17:35 (-07)",
+      "class_date": "2026-04-21 21:00 (-07)",
+      "title": "45 min Power Zone Endurance Ride",
+      "action": "auto-matched, locked",
+      "score": 120,
+      "ride": "45 min Power Zone Endurance Ride"
+    }
+  ]
+}
+```
+
+Tip: filter the table with `jq`, e.g. only the auto-matched rows:
+`./peloton-match.sh --dry-run | jq '.rows[] | select(.action | startswith("auto-matched"))'`
+
+---
+
 ## Workflow 3: Class Scraper
 
 ### How it works
@@ -313,7 +427,7 @@ python peloton_login_save_session.py
 
 | Package | Used by | Notes |
 |---|---|---|
-| `requests` | `Peloton_Airtable_Import.py`, `Peloton_Dedup.py` | Airtable API calls |
+| `requests` | `Peloton_Airtable_Import.py`, `Peloton_Match.py`, `Peloton_Dedup.py` | Airtable API calls |
 | `playwright` | `peloton_class_scrape_stateful.py`, `peloton_login_save_session.py` | Browser automation |
 | `python-dotenv` | `peloton_login_save_session.py` | Optional; loads `.env` files |
 
@@ -343,6 +457,6 @@ These files exist locally but are never committed:
 
 A few known gaps and natural next steps:
 
-- **Peloton ↔ Peloton-Rides matching** — `Peloton_Airtable_Import.py` notes this is not yet implemented. After import, workout records aren't yet linked to ride/class records.
+- **Peloton ↔ Peloton-Rides matching** — implemented in `Peloton_Match.py` / `peloton-match.sh` (Workflow 2b), and run automatically after each import. Tuning the scoring weights or the auto-match threshold is the natural next step.
 - **Scraper → Airtable integration** — The scraper currently outputs JSON to stdout. There's no script yet that takes scraper output and writes it into an Airtable table.
 - **Instructor aliases** — `INSTRUCTOR_NAME_ALIASES` in `Peloton_Airtable_Import.py` maps Peloton CSV names to Airtable instructor names. Add entries there if new mismatches appear in the import warnings.

@@ -67,11 +67,26 @@ if [ -n "${AIRTABLE_TOKEN:-}" ]; then
   TOKEN_ARG="--token $AIRTABLE_TOKEN"
 fi
 
-# Run
-exec python3 "$PYTHON_SCRIPT" \
+# Run import (capture status without aborting on failure)
+set +e
+python3 "$PYTHON_SCRIPT" \
   --base-id "$BASE_ID" \
   --table-id "$TABLE_ID" \
   --csv "$CSV_PATH" \
   ${DRY_RUN:-} \
   ${TOKEN_ARG:-} \
   ${RECENT_ARG:-}
+IMPORT_STATUS=$?
+set -e
+
+# After a successful real import, link the new workouts to their class metadata.
+# Best-effort: a matcher failure must not fail the import.
+if [ "$IMPORT_STATUS" -eq 0 ] && [ -z "$DRY_RUN" ]; then
+  MATCH_SCRIPT="$SCRIPT_DIR/peloton-match.sh"
+  if [ -x "$MATCH_SCRIPT" ] || [ -f "$MATCH_SCRIPT" ]; then
+    echo "Running Peloton -> Peloton-Rides matcher..."
+    bash "$MATCH_SCRIPT" || echo "Warning: matcher failed (import still succeeded)."
+  fi
+fi
+
+exit "$IMPORT_STATUS"

@@ -28,6 +28,10 @@ The primary day-to-day command. Downloads CSV from Peloton, runs it into Airtabl
 
 **Requires:** `AIRTABLE_TOKEN` set in `~/.env`
 
+> After a successful (non-dry-run) import, `peloton-sync.sh` automatically runs
+> `peloton-match.sh` to link the new workouts to their class metadata. The
+> matcher is best-effort — if it fails, the import still succeeds.
+
 ---
 
 ## Peloton_Airtable_Import.py — Import (direct)
@@ -66,6 +70,87 @@ python3 Peloton_Airtable_Import.py \
   "api_errors": 0,
   "dry_run": false
 }
+```
+
+---
+
+## peloton-match.sh — Link workouts to class metadata
+
+Links **Peloton** workout records to their **Peloton-Rides** class metadata
+(`LinkedRide`) so each workout inherits the class's Power Zone breakdown. Safe
+for agents (e.g. Mandy) to run. Idempotent — re-running never re-links locked
+records.
+
+```bash
+# Preview — compute scores + report actions, write nothing
+./peloton-match.sh --dry-run
+
+# Score all workouts, auto-link confident matches (score >= 80), lock linked records
+./peloton-match.sh
+
+# Skip already-locked records (faster)
+./peloton-match.sh --unlinked-only
+
+# Only the N most-recent workouts
+./peloton-match.sh --recent 10
+```
+
+**Requires:** `AIRTABLE_TOKEN` set in `~/.env` — required even for `--dry-run`,
+because scores are read from live Airtable data.
+
+Runs automatically after `peloton-sync.sh` import. Flags pass straight through
+to `Peloton_Match.py`.
+
+**Output:** JSON summary on stdout (aggregate counts + a `rows` table, sorted
+newest-*taken* first); per-workout action log on stderr.
+
+Each row carries two dates: **`taken`** = when you did the workout
+(`Workout_timestamp`, drives the sort = "recent rides"), and **`class_date`** =
+when the class aired (`ClassTimestampString`, the actual match key — a recent
+ride can map to an old class).
+
+```json
+{
+  "workouts_processed": 312,
+  "auto_matched": 8,
+  "locked": 14,
+  "scored_only": 290,
+  "ambiguous": 2,
+  "no_candidate": 6,
+  "updates_prepared": 312,
+  "batches_sent": 32,
+  "api_errors": 0,
+  "dry_run": false,
+  "rows": [
+    {"taken": "2026-06-08 17:35 (-07)", "class_date": "2026-04-21 21:00 (-07)",
+     "title": "45 min Power Zone Endurance Ride", "action": "auto-matched, locked",
+     "score": 120, "ride": "45 min Power Zone Endurance Ride"}
+  ]
+}
+```
+
+The `rows` table is the easy way to scan results — e.g. pipe to `jq` to see just
+the auto-matches: `./peloton-match.sh --dry-run | jq '.rows[] | select(.action | startswith("auto-matched"))'`
+
+---
+
+## Peloton_Match.py — Matcher (direct)
+
+Run the matcher directly for full control over base/table IDs.
+
+```bash
+# Dry run
+python3 Peloton_Match.py --dry-run
+
+# Default IDs (Health-Tracking base)
+python3 Peloton_Match.py
+
+# Override IDs / token explicitly
+python3 Peloton_Match.py \
+  --base-id appBmQA2p3z2Fdofa \
+  --peloton-table-id tblBuzhfztfwgE59f \
+  --rides-table-id tblht11eg2nJ5gh3o \
+  --token pat_xxx
 ```
 
 ---
@@ -161,7 +246,7 @@ All set in `~/.env` (home directory, not project folder).
 
 | Variable | Used by | Description |
 |---|---|---|
-| `AIRTABLE_TOKEN` | `peloton-sync.sh`, `Peloton_Airtable_Import.py`, `Peloton_Dedup.py` | Airtable personal access token |
+| `AIRTABLE_TOKEN` | `peloton-sync.sh`, `Peloton_Airtable_Import.py`, `peloton-match.sh`, `Peloton_Match.py`, `Peloton_Dedup.py` | Airtable personal access token |
 | `PELOTON_EMAIL` | `scraper/peloton_login_save_session.py` | Peloton account email |
 | `PELOTON_PASSWORD` | `scraper/peloton_login_save_session.py` | Peloton account password |
 

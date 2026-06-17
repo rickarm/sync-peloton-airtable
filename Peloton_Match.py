@@ -206,6 +206,30 @@ def contains_power_zone_hint(text: Any) -> str:
     return ""
 
 
+def classify_unlinked(best_score: float, second_score: Optional[float]) -> str:
+    """Decide what to do with an unlinked, unlocked workout's best candidate.
+
+    Returns one of:
+      "auto-match" — confident, unambiguous → link + lock
+      "ambiguous"  — auto-link-worthy but a near-tie blocks it → score only
+      "too-low"    — best isn't strong enough to link → score only
+
+    Ambiguity only applies once the best is at/above the auto-match threshold:
+    below it, a close second is just two weak candidates ("too-low"), not a
+    meaningful tie. This keeps the "ambiguous" bucket to genuine high-confidence
+    ties worth a human look, instead of low-score noise (which grows with a
+    wider time window).
+    """
+    if best_score < AUTO_MATCH_THRESHOLD:
+        return "too-low"
+    ambiguous = (
+        second_score is not None
+        and best_score < AUTO_MATCH_THRESHOLD + 10
+        and (best_score - second_score) <= 5
+    )
+    return "ambiguous" if ambiguous else "auto-match"
+
+
 # ── Cell accessors (REST semantics) ────────────────────────────────────────────
 
 def linked_ids(fields: Dict[str, Any], key: str) -> List[str]:
@@ -497,12 +521,6 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             eprint(f"  [no candidate] taken {taken} | {title} (class {class_when})")
             continue
 
-        ambiguous = (
-            second is not None
-            and best["score"] < AUTO_MATCH_THRESHOLD + 10
-            and (best["score"] - second["score"]) <= 5
-        )
-
         fields = {P_MATCH_SCORE: best["score"]}
         action = "scored only"
 
@@ -514,20 +532,22 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             else:
                 action = "linked, rescored"
             counts["scored_only"] += 1
-        elif not locked and best["score"] >= AUTO_MATCH_THRESHOLD and not ambiguous:
-            fields[P_LINKED_RIDE] = [{"id": best["ride_id"]}]
-            fields[P_MATCH_LOCK] = True
-            counts["auto_matched"] += 1
-            action = "auto-matched, locked"
         elif locked:
             action = "locked, scored only"
             counts["scored_only"] += 1
-        elif ambiguous:
-            action = "ambiguous, scored only"
-            counts["ambiguous"] += 1
         else:
-            action = "score too low"
-            counts["scored_only"] += 1
+            decision = classify_unlinked(best["score"], second["score"] if second else None)
+            if decision == "auto-match":
+                fields[P_LINKED_RIDE] = [{"id": best["ride_id"]}]
+                fields[P_MATCH_LOCK] = True
+                counts["auto_matched"] += 1
+                action = "auto-matched, locked"
+            elif decision == "ambiguous":
+                action = "ambiguous, scored only"
+                counts["ambiguous"] += 1
+            else:
+                action = "score too low"
+                counts["scored_only"] += 1
 
         updates.append({"id": rec_id, "fields": fields})
         rows.append({"taken": taken, "class_date": class_when, "title": title,

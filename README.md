@@ -324,7 +324,10 @@ For every Peloton workout, it scores every Peloton-Rides record and:
 
 Auto-match threshold is **80**, with an ambiguity guard: it will not auto-link
 if the second-best candidate is within 5 points of the best and the best is
-below 90 (in that case it only scores).
+below 90 (in that case it only scores). The guard only applies at/above the
+threshold — a workout whose best is below 80 is reported as `score too low`, not
+`ambiguous`, so the `ambiguous` count reflects only genuine high-confidence ties
+worth a human look (not low-score noise, which grows with a wider time window).
 
 ### Output
 

@@ -151,6 +151,23 @@ def test_candidate_selection_orders_best_then_second():
     assert second["ride_id"] == "recRide2"
 
 
+def test_classify_unlinked():
+    # Strong, no close second -> auto-match
+    assert m.classify_unlinked(120, 40) == "auto-match"
+    assert m.classify_unlinked(85, 40) == "auto-match"
+    # High score (>=90) ignores a close second -> still auto-match (cap kept)
+    assert m.classify_unlinked(120, 118) == "auto-match"
+    # Just over threshold with a near-tie -> genuinely ambiguous
+    assert m.classify_unlinked(82, 80) == "ambiguous"
+    assert m.classify_unlinked(85, 81) == "ambiguous"
+    # Below threshold: a close second is NOT ambiguous, just too-low
+    # (this is the low-score noise that a wider window was surfacing)
+    assert m.classify_unlinked(55, 52) == "too-low"
+    assert m.classify_unlinked(40, 40) == "too-low"
+    # Below threshold, no second -> too-low
+    assert m.classify_unlinked(70, None) == "too-low"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -1,9 +1,20 @@
 # sync-peloton-airtable
 
-Tools for syncing Peloton workout data into an Airtable base. Three independent workflows:
+Tools for syncing Peloton workout data into an Airtable base.
 
-1. **Automated Claude MCP Sync** — Drop a CSV in `~/Downloads`; a launchd watcher auto-copies it and syncs to Airtable via Claude Code's Airtable MCP integration. No API key setup required.
-2. **Python CSV Import** — Download a Peloton workout CSV and run the Python import script directly. Requires an Airtable personal access token in `~/.env`.
+> **Single writer policy.** Peloton workouts are written to Airtable through
+> **one** path only: the idempotent **Python CSV Import** (`./peloton-sync.sh`).
+> It upserts on `Workout_timestamp`, so it can be re-run safely and never creates
+> duplicates. The old automated folder watcher is **disabled** (see below) — it
+> was a second writer, and two writers caused duplicate workout rows.
+
+Workflows:
+
+1. **Automated Claude MCP Sync** — *(deprecated/disabled)* a launchd watcher that
+   auto-synced CSVs dropped in `~/Downloads`. Disabled to enforce a single writer.
+2. **Python CSV Import** — Download a Peloton workout CSV and run `./peloton-sync.sh`
+   (auto-detects the newest CSV in `~/Downloads`). Idempotent upsert; requires an
+   Airtable personal access token in `~/.env`. **This is the only write path.**
 3. **Class Scraper** — Scrape class metadata (segments, zone allocations, description) from the Peloton website using a saved browser session.
 
 ---
@@ -12,7 +23,7 @@ Tools for syncing Peloton workout data into an Airtable base. Three independent 
 
 | Workflow | What's needed | Where it lives |
 |---|---|---|
-| Automated Claude MCP Sync | Nothing — Airtable auth is handled by the claude.ai MCP integration built into Claude Code | N/A |
+| Automated Claude MCP Sync *(disabled)* | N/A — workflow deprecated; use Python CSV Import | N/A |
 | Python CSV Import | `AIRTABLE_TOKEN` (Airtable personal access token) | `~/.env` (never committed) |
 | Class Scraper | `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `~/.env` (never committed) |
 
@@ -24,7 +35,7 @@ Nothing sensitive is hardcoded in any script.
 
 ```
 sync-peloton-airtable/
-├── peloton-claude-sync.sh           # Claude MCP sync entry point (used by launchd)
+├── peloton-claude-sync.sh           # (DEPRECATED) old launchd watcher entry point — kept for reference
 ├── peloton-sync.sh                  # Python-based CSV import entry point (runs the matcher after import)
 ├── peloton-match.sh                 # Workout ↔ class matcher entry point (agent-runnable)
 ├── Peloton_Airtable_Import.py       # Reads CSV, upserts records into Airtable
@@ -110,11 +121,27 @@ A browser window will open. Log into Peloton, then press Enter in the terminal. 
 
 ---
 
-## Workflow 1: Automated Claude MCP Sync
+## Workflow 1: Automated Claude MCP Sync (DEPRECATED — disabled)
 
-This is the preferred day-to-day workflow. It requires no API keys and runs automatically when you drop a new Peloton CSV in your Downloads folder.
+> **This workflow is disabled.** Use **Workflow 2: Python CSV Import**
+> (`./peloton-sync.sh`) instead — it is the single, idempotent write path.
+>
+> This folder watcher was a *second* writer alongside ad-hoc agent writes, and
+> running two writers produced duplicate workout rows. It is documented here for
+> reference and so it can be re-enabled in the future (but only if Workflow 2 is
+> retired first — never run both).
+>
+> **To disable it on a machine where it's still loaded:**
+> ```bash
+> launchctl bootout gui/$(id -u)/com.rickarmbrust.peloton-sync
+> # older macOS: launchctl unload ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
+> rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
+> ```
 
-### How it works
+<details>
+<summary>Historical setup / reference (workflow disabled)</summary>
+
+### How it worked
 
 1. You download a Peloton workout CSV from [members.onepeloton.com](https://members.onepeloton.com) → Profile → Workout History → Download. The file will be named `Big__Cheese_workouts*.csv`.
 2. The launchd watcher fires when any file changes in `~/Downloads`.
@@ -210,9 +237,11 @@ Blank or zero metric fields are omitted from the insert rather than written as `
 | "Power Zone" (not Endurance or Max) | `PZ` |
 | Anything else | `Non-PZ` |
 
+</details>
+
 ---
 
-## Workflow 2: Python CSV Import
+## Workflow 2: Python CSV Import (the single write path)
 
 ### How it works
 

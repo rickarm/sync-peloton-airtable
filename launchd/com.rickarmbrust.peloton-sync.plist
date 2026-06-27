@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DEPRECATED / DISABLED (2026-06) — kept for reference only.
+
+  This folder watcher was one of two paths that wrote Peloton workouts to
+  Airtable. Having two writers (this watcher + ad-hoc agent writes) caused
+  duplicate rows. The project now uses a single, deliberate, idempotent write
+  path: run `./peloton-sync.sh` after downloading the CSV (it upserts on
+  Workout_timestamp and cannot create duplicates).
+
+  Do NOT load this LaunchAgent. If it is currently loaded, unload it with:
+    launchctl bootout gui/$(id -u)/com.rickarmbrust.peloton-sync
+    # (older macOS) launchctl unload ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
+  and remove the installed copy: rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
+
+  The body below is left intact only so the watcher can be re-enabled later.
+-->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

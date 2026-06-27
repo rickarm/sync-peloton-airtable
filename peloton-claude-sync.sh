@@ -1,4 +1,12 @@
 #!/bin/bash
+# DEPRECATED / DISABLED (2026-06) — kept for reference only.
+#
+# This was the launchd-watcher entry point (Workflow 1). Running it alongside
+# ad-hoc agent writes produced duplicate Airtable rows. The supported path is
+# now a single, deliberate, idempotent import: run `./peloton-sync.sh` after
+# downloading the CSV. It upserts on Workout_timestamp (cannot create dupes) and
+# auto-runs the matcher. Do not wire this script to a launchd WatchPaths trigger.
+#
 # Peloton workout sync — watches Downloads for new CSV, copies to health-data, syncs to Airtable
 # Usage:
 #   peloton-sync.sh           # sync (default)

@@ -14,18 +14,40 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 
 ## Workflows
 
-### Workflow 1: Claude MCP Sync (preferred, automated)
-- Watcher: launchd monitors `~/Downloads` for `Big__Cheese_workouts*.csv`
-- Script: `peloton-claude-sync.sh`
-- Plist: `launchd/com.rickarmbrust.peloton-sync.plist`
-- No API keys needed (uses Claude Code's Airtable MCP)
-- State tracking: `~/scripts/logs/peloton-sync-state`
+> **Single writer policy (important).** Peloton workouts have exactly **one**
+> supported write path into Airtable: the idempotent Python importer
+> (Workflow 2, `./peloton-sync.sh`). It upserts on `Workout_timestamp`, so it
+> can be re-run safely and never creates duplicates. Duplicate rows in the past
+> came from having *two* writers — the old folder watcher **and** ad-hoc agent
+> MCP writes. **Never** insert Peloton workouts a second way (see the agent rule
+> under Workflow 2).
 
-### Workflow 2: Python CSV Import
+### Workflow 1: Claude MCP Sync (DEPRECATED — disabled)
+- **Disabled as of 2026-06.** Do not re-enable without first removing Workflow 2;
+  two concurrent writers is what caused duplicate workouts.
+- Watcher: launchd monitored `~/Downloads` for `Big__Cheese_workouts*.csv`
+- Script: `peloton-claude-sync.sh` (kept for reference only)
+- Plist: `launchd/com.rickarmbrust.peloton-sync.plist` (kept for reference only)
+- To unload on Rick's machine:
+  `launchctl bootout gui/$(id -u)/com.rickarmbrust.peloton-sync` (or, on older
+  macOS, `launchctl unload ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist`),
+  then `rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist`.
+- Superseded by Workflow 2.
+
+### Workflow 2: Python CSV Import (the single write path)
 - Run: `./peloton-sync.sh [csv_path]` or auto-detect from Downloads
 - Dry-run: `./peloton-sync.sh --dry-run`
 - Requires: `AIRTABLE_TOKEN` in `~/.env`
 - After a successful (non-dry-run) import it auto-runs the matcher (Workflow 2b).
+- **Idempotent:** upserts on `Workout_timestamp` (and de-dupes within the CSV),
+  so re-running against the same CSV produces 0 new rows.
+
+**How Mandy/agents import a CSV:** after a `Big__Cheese_workouts*.csv` lands in
+`~/Downloads`, run `./peloton-sync.sh --dry-run` first, sanity-check the
+create/update counts, then run `./peloton-sync.sh` to commit. **Never** write
+Peloton workout rows via the Airtable MCP (`create_records_for_table`) directly —
+that path has no dedup guard and is what produced duplicate workouts. The
+Airtable MCP is fine for *reads*; all *writes* go through `./peloton-sync.sh`.
 
 ### Workflow 2b: Workout ↔ Class Matching
 Links **Peloton** workout rows to their **Peloton-Rides** class metadata
@@ -115,7 +137,9 @@ Airtable tables:
 - No venv in this project — scripts use `/opt/homebrew/bin/python3` directly (`requests` is installed system-wide)
 - Resistance values from CSV must be divided by 100 (45 → 0.45)
 - Scraper session cookies expire (days/weeks) — re-run login script
-- `peloton-sync.sh` also exists in `~/scripts/` — keep both in sync
+- The launchd watcher (Workflow 1) is **deprecated/disabled** — the `~/scripts/`
+  copy it ran should be unloaded (see Workflow 1). All writes go through the repo
+  `./peloton-sync.sh`.
 - PowerZone type inference from class title: "Power Zone Endurance" → PZE, etc.
 - Matcher (`Peloton_Match.py`) reads via the REST API, which returns linked-record
   fields (`InstructorName`, `Instructor`, `Type`) as arrays of **record IDs**, not

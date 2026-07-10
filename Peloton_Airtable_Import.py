@@ -54,9 +54,17 @@ import requests
 # ----------------------------
 # Airtable-specific config
 # ----------------------------
+# Base/table IDs come from peloton-sync.conf (overridable via
+# ~/.peloton-sync.conf, env vars, or CLI flags).
+
+from peloton_config import load_config
+
+_CFG = load_config()
+BASE_ID = _CFG.get("AIRTABLE_BASE_ID", "")
+TABLE_ID = _CFG.get("PELOTON_TABLE_ID", "")
+INSTRUCTOR_TABLE_ID = _CFG.get("PELOTON_INSTRUCTOR_TABLE_ID", "")
 
 # Your Peloton table field IDs from the current base schema.
-INSTRUCTOR_TABLE_ID = "tbltRUHnRrncwUbnQ"
 INSTRUCTOR_NAME_FIELD_ID = "fldfA0KxrFEfYpVQM"
 
 # Known name differences between Peloton CSV and Airtable instructor table.
@@ -364,9 +372,10 @@ def airtable_request(
 def fetch_instructor_map(
     session: requests.Session,
     base_id: str,
+    instructor_table_id: str,
 ) -> Dict[str, str]:
     """Returns {instructor_name: record_id} from the Peloton_Instructor table."""
-    url = f"https://api.airtable.com/v0/{base_id}/{INSTRUCTOR_TABLE_ID}"
+    url = f"https://api.airtable.com/v0/{base_id}/{instructor_table_id}"
     instructor_map: Dict[str, str] = {}
     offset = None
     while True:
@@ -427,6 +436,7 @@ def upsert_records(
     token: str,
     base_id: str,
     table_id: str,
+    instructor_table_id: str,
     records: List[Dict[str, Any]],
     dry_run: bool = False,
 ) -> Tuple[int, int]:
@@ -459,7 +469,7 @@ def upsert_records(
     eprint(f"Found {len(existing)} existing records in Airtable.")
 
     eprint("Fetching instructor lookup table...")
-    instructor_map = fetch_instructor_map(session, base_id)
+    instructor_map = fetch_instructor_map(session, base_id, instructor_table_id)
     eprint(f"Loaded {len(instructor_map)} instructors.")
     unmatched_instructors: set = set()
 
@@ -517,8 +527,9 @@ def upsert_records(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Import/update Peloton CSV into Airtable")
     parser.add_argument("--csv", required=True, help="Path to Peloton CSV export")
-    parser.add_argument("--base-id", required=True, help="Airtable base ID")
-    parser.add_argument("--table-id", default="tblBuzhfztfwgE59f", help="Airtable table ID for Peloton")
+    parser.add_argument("--base-id", default=BASE_ID, help="Airtable base ID; defaults to peloton-sync.conf")
+    parser.add_argument("--table-id", default=TABLE_ID, help="Airtable table ID for Peloton; defaults to peloton-sync.conf")
+    parser.add_argument("--instructor-table-id", default=INSTRUCTOR_TABLE_ID, help="Airtable table ID for the instructor lookup; defaults to peloton-sync.conf")
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var")
     parser.add_argument("--dry-run", action="store_true", help="Parse and print the first record payload, but do not write to Airtable")
     parser.add_argument("--recent", type=int, default=None, metavar="N", help="Only process the N most recent workouts from the CSV")
@@ -526,6 +537,16 @@ def main() -> int:
 
     if not args.token and not args.dry_run:
         eprint("Missing Airtable token. Set AIRTABLE_TOKEN or pass --token.")
+        return 2
+
+    missing = [name for name, val in (
+        ("--base-id", args.base_id),
+        ("--table-id", args.table_id),
+        ("--instructor-table-id", args.instructor_table_id),
+    ) if not val]
+    if missing:
+        eprint(f"Missing {', '.join(missing)} — set them in peloton-sync.conf "
+               "(or ~/.peloton-sync.conf) or pass the flags explicitly.")
         return 2
 
     if not os.path.exists(args.csv):
@@ -567,6 +588,7 @@ def main() -> int:
         token=args.token or "",
         base_id=args.base_id,
         table_id=args.table_id,
+        instructor_table_id=args.instructor_table_id,
         records=airtable_field_records,
         dry_run=args.dry_run,
     )

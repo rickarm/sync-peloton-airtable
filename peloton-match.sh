@@ -17,6 +17,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/Peloton_Match.py"
 
+# Load config (base/table IDs): repo defaults, then per-user override
+[ -f "$SCRIPT_DIR/peloton-sync.conf" ] && source "$SCRIPT_DIR/peloton-sync.conf"
+[ -f "$HOME/.peloton-sync.conf" ] && source "$HOME/.peloton-sync.conf"
+for var in AIRTABLE_BASE_ID PELOTON_TABLE_ID PELOTON_RIDES_TABLE_ID PELOTON_TYPE_TABLE_ID; do
+  if [ -z "${!var:-}" ]; then
+    echo "Error: $var not set — check peloton-sync.conf (or ~/.peloton-sync.conf)."
+    exit 1
+  fi
+done
+
 # Validate Python is available
 if ! command -v python3 &>/dev/null; then
   echo "Error: python3 not found. Install Python 3 first."
@@ -41,4 +51,11 @@ if [ -z "${AIRTABLE_TOKEN:-}" ]; then
   exit 1
 fi
 
-exec python3 "$PYTHON_SCRIPT" --token "$AIRTABLE_TOKEN" "$@"
+# Config-derived flags come first so anything in "$@" can still override them.
+exec python3 "$PYTHON_SCRIPT" \
+  --token "$AIRTABLE_TOKEN" \
+  --base-id "$AIRTABLE_BASE_ID" \
+  --peloton-table-id "$PELOTON_TABLE_ID" \
+  --rides-table-id "$PELOTON_RIDES_TABLE_ID" \
+  --type-table-id "$PELOTON_TYPE_TABLE_ID" \
+  "$@"

@@ -10,7 +10,9 @@ The primary day-to-day command. Downloads CSV from Peloton, runs it into Airtabl
 
 **Step 1:** Download your workout CSV from Peloton
 > Members site → Profile → Workout History → Download CSV
-> Save to `~/Downloads/` — filename should match `Big__Cheese_workouts*.csv`
+> Save to `~/Downloads/` — filename should match `<PELOTON_USERNAME>_workouts*.csv`
+> (username, base ID, and table IDs are configured in `peloton-sync.conf`;
+> per-user override: `~/.peloton-sync.conf`)
 
 **Step 2:** Run the sync
 

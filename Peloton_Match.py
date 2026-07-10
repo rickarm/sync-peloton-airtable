@@ -74,11 +74,16 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 # ── Airtable config ───────────────────────────────────────────────────────────
+# Base/table IDs come from peloton-sync.conf (overridable via
+# ~/.peloton-sync.conf, env vars, or the CLI flags below).
 
-BASE_ID = "appBmQA2p3z2Fdofa"
-PELOTON_TABLE_ID = "tblBuzhfztfwgE59f"      # Peloton (workout history)
-RIDES_TABLE_ID = "tblht11eg2nJ5gh3o"        # Peloton-Rides (class metadata)
-TYPE_TABLE_ID = "tblcUCbRTQbN6B4uK"         # Peloton_type (for Power Zone hint)
+from peloton_config import load_config
+
+_CFG = load_config()
+BASE_ID = _CFG.get("AIRTABLE_BASE_ID", "")
+PELOTON_TABLE_ID = _CFG.get("PELOTON_TABLE_ID", "")       # Peloton (workout history)
+RIDES_TABLE_ID = _CFG.get("PELOTON_RIDES_TABLE_ID", "")   # Peloton-Rides (class metadata)
+TYPE_TABLE_ID = _CFG.get("PELOTON_TYPE_TABLE_ID", "")     # Peloton_type (for Power Zone hint)
 
 # Thresholds
 AUTO_MATCH_THRESHOLD = 80          # mirrors the extension
@@ -430,9 +435,9 @@ def fetch_records(session: Any, base_id: str, table_id: str,
     return records
 
 
-def fetch_type_map(session: Any, base_id: str) -> Dict[str, str]:
+def fetch_type_map(session: Any, base_id: str, type_table_id: str) -> Dict[str, str]:
     """Return {record_id: type_name} for the Peloton_type table."""
-    recs = fetch_records(session, base_id, TYPE_TABLE_ID, [TYPE_NAME_FIELD])
+    recs = fetch_records(session, base_id, type_table_id, [TYPE_NAME_FIELD])
     return {r["id"]: r.get("fields", {}).get(TYPE_NAME_FIELD, "") for r in recs}
 
 
@@ -444,7 +449,8 @@ def chunked(items: list, size: int) -> Iterable[list]:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
-        dry_run: bool, unlinked_only: bool, recent: Optional[int]) -> Dict[str, Any]:
+        type_table_id: str, dry_run: bool, unlinked_only: bool,
+        recent: Optional[int]) -> Dict[str, Any]:
     import requests
     session = requests.Session()
     session.headers.update({
@@ -453,7 +459,7 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
     })
 
     eprint("Fetching Peloton-Rides, Peloton workouts, and type lookup...")
-    type_map = fetch_type_map(session, base_id)
+    type_map = fetch_type_map(session, base_id, type_table_id)
     ride_recs = fetch_records(session, base_id, rides_table_id, RIDES_FIELDS)
     workout_recs = fetch_records(session, base_id, peloton_table_id, PELOTON_FIELDS)
     rides = [Ride(r) for r in ride_recs]
@@ -602,6 +608,7 @@ def main() -> int:
     parser.add_argument("--base-id", default=BASE_ID)
     parser.add_argument("--peloton-table-id", default=PELOTON_TABLE_ID)
     parser.add_argument("--rides-table-id", default=RIDES_TABLE_ID)
+    parser.add_argument("--type-table-id", default=TYPE_TABLE_ID)
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"),
                         help="Airtable PAT; defaults to AIRTABLE_TOKEN env var")
     parser.add_argument("--dry-run", action="store_true",
@@ -617,11 +624,23 @@ def main() -> int:
                "(required even for --dry-run, since scores are read from Airtable).")
         return 2
 
+    missing = [name for name, val in (
+        ("--base-id", args.base_id),
+        ("--peloton-table-id", args.peloton_table_id),
+        ("--rides-table-id", args.rides_table_id),
+        ("--type-table-id", args.type_table_id),
+    ) if not val]
+    if missing:
+        eprint(f"Missing {', '.join(missing)} — set them in peloton-sync.conf "
+               "(or ~/.peloton-sync.conf) or pass the flags explicitly.")
+        return 2
+
     summary = run(
         token=args.token,
         base_id=args.base_id,
         peloton_table_id=args.peloton_table_id,
         rides_table_id=args.rides_table_id,
+        type_table_id=args.type_table_id,
         dry_run=args.dry_run,
         unlinked_only=args.unlinked_only,
         recent=args.recent,

@@ -6,8 +6,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/Peloton_Airtable_Import.py"
-BASE_ID="appBmQA2p3z2Fdofa"
-TABLE_ID="tblBuzhfztfwgE59f"
+
+# Load config (username, base/table IDs): repo defaults, then per-user override
+[ -f "$SCRIPT_DIR/peloton-sync.conf" ] && source "$SCRIPT_DIR/peloton-sync.conf"
+[ -f "$HOME/.peloton-sync.conf" ] && source "$HOME/.peloton-sync.conf"
+for var in PELOTON_USERNAME AIRTABLE_BASE_ID PELOTON_TABLE_ID; do
+  if [ -z "${!var:-}" ]; then
+    echo "Error: $var not set — check peloton-sync.conf (or ~/.peloton-sync.conf)."
+    exit 1
+  fi
+done
+
+BASE_ID="$AIRTABLE_BASE_ID"
+TABLE_ID="$PELOTON_TABLE_ID"
 DRY_RUN=""
 CSV_PATH=""
 RECENT_ARG=""
@@ -41,9 +52,9 @@ fi
 
 # Auto-detect CSV if not provided
 if [ -z "$CSV_PATH" ]; then
-  CSV_PATH=$(ls -t "$HOME/Downloads/"Big__Cheese_workouts*.csv 2>/dev/null | head -1 || true)
+  CSV_PATH=$(ls -t "$HOME/Downloads/${PELOTON_USERNAME}_workouts"*.csv 2>/dev/null | head -1 || true)
   if [ -z "$CSV_PATH" ]; then
-    echo "Error: No Peloton CSV found in ~/Downloads/ (looking for Big__Cheese_workouts*.csv)"
+    echo "Error: No Peloton CSV found in ~/Downloads/ (looking for ${PELOTON_USERNAME}_workouts*.csv)"
     exit 1
   fi
   echo "Auto-detected: $CSV_PATH"

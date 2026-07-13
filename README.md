@@ -61,6 +61,10 @@ sync-peloton-airtable/
 
 ## Configuration
 
+> **Setting this up for your own Peloton account / your own base?** Follow
+> [SETUP.md](SETUP.md) — it walks through the config file, token, and the
+> required Airtable schema from scratch.
+
 The Peloton username, Airtable base ID, and table IDs live in **`peloton-sync.conf`**
 (repo root) — a shell-sourceable `KEY="value"` file that both the wrapper scripts
 and the Python scripts (via `peloton_config.py`) read. To point the tools at a
@@ -87,6 +91,10 @@ to field names) to run against another base.
 ---
 
 ## Setup (New Machine)
+
+> These steps are for a machine syncing to the **original** base. To set up
+> against your own Peloton account and your own base, use [SETUP.md](SETUP.md)
+> instead.
 
 ### 1. Clone the repo
 

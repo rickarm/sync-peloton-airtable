@@ -125,7 +125,13 @@ Credentials in `~/.env` (home dir, NOT repo):
 - `AIRTABLE_TOKEN` — for Workflow 2 and Weight sync
 - `PELOTON_EMAIL` / `PELOTON_PASSWORD` — for Workflow 3 (scraper)
 
-Airtable tables:
+Sync config (Peloton username, base ID, table IDs) in **`peloton-sync.conf`**
+(repo root, checked in). Per-user override: `~/.peloton-sync.conf` (loaded
+after, wins). Wrappers source it; Python scripts read it via
+`peloton_config.py`. Env vars of the same names and CLI flags override.
+Field IDs (`FIELD_IDS` in `Peloton_Airtable_Import.py`) remain hardcoded.
+
+Airtable tables (defaults in `peloton-sync.conf`):
 - `tblBuzhfztfwgE59f` — Peloton workouts
 - `tblht11eg2nJ5gh3o` — Peloton-Rides (class metadata; matcher target)
 - `tblcUCbRTQbN6B4uK` — Peloton_type lookup (matcher Power Zone hint)

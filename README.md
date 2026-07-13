@@ -59,18 +59,30 @@ sync-peloton-airtable/
 
 ---
 
-## Airtable Configuration
+## Configuration
 
-These IDs are hardcoded in `peloton-sync.sh` and the Python scripts. Update them here if the base is ever re-created.
+The Peloton username, Airtable base ID, and table IDs live in **`peloton-sync.conf`**
+(repo root) — a shell-sourceable `KEY="value"` file that both the wrapper scripts
+and the Python scripts (via `peloton_config.py`) read. To point the tools at a
+different Peloton account / Airtable base without editing the repo, copy it to
+`~/.peloton-sync.conf` and edit the copy — it loads after the repo file and
+overrides it. Environment variables of the same names override both; CLI flags
+override everything.
 
-| What | ID |
+| Key | Default (this base) |
 |---|---|
-| Base | `appBmQA2p3z2Fdofa` |
-| Peloton workouts table | `tblBuzhfztfwgE59f` |
-| Peloton-Rides (class metadata) table | `tblht11eg2nJ5gh3o` |
-| Instructor lookup table | `tbltRUHnRrncwUbnQ` |
-| Peloton_type lookup table (matcher) | `tblcUCbRTQbN6B4uK` |
-| Merge key field (Workout_timestamp) | `fldLajy5EBHnICqj2` |
+| `PELOTON_USERNAME` (CSV export filename prefix) | `Big__Cheese` |
+| `AIRTABLE_BASE_ID` | `appBmQA2p3z2Fdofa` |
+| `PELOTON_TABLE_ID` (workouts) | `tblBuzhfztfwgE59f` |
+| `PELOTON_RIDES_TABLE_ID` (class metadata) | `tblht11eg2nJ5gh3o` |
+| `PELOTON_TYPE_TABLE_ID` (matcher PZ hint) | `tblcUCbRTQbN6B4uK` |
+| `PELOTON_INSTRUCTOR_TABLE_ID` | `tbltRUHnRrncwUbnQ` |
+
+Still hardcoded (base-specific **field** IDs, in `Peloton_Airtable_Import.py`):
+the merge key field `Workout_timestamp` (`fldLajy5EBHnICqj2`) and the other
+`FIELD_IDS`, plus the instructor name field (`fldfA0KxrFEfYpVQM`). A copied
+base gets new field IDs, so these would need updating (or the importer switched
+to field names) to run against another base.
 
 ---
 

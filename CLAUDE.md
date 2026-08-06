@@ -36,15 +36,25 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 
 ### Workflow 2: Python CSV Import (the single write path)
 - Run: `./peloton-sync.sh [csv_path]` or auto-detect from Downloads
-- Dry-run: `./peloton-sync.sh --dry-run`
+- Dry-run: `./peloton-sync.sh --dry-run` (reports would-create/update/skip counts)
+- Full upsert: `./peloton-sync.sh --full` (see below; not needed day-to-day)
 - Requires: `AIRTABLE_TOKEN` in `~/.env`
-- After a successful (non-dry-run) import it auto-runs the matcher (Workflow 2b).
-- **Idempotent:** upserts on `Workout_timestamp` (and de-dupes within the CSV),
-  so re-running against the same CSV produces 0 new rows.
+- After a successful (non-dry-run) import it auto-runs the matcher (Workflow 2b) —
+  scoped `--unlinked-only` by default, full re-score with `--full`.
+- **Incremental by default:** matches CSV rows to Airtable on `Workout_timestamp`
+  and only **creates** rows that aren't in Airtable yet — existing rows are
+  skipped, not rewritten. A daily run against the full-history CSV writes only
+  the new workouts.
+- `--full` restores the legacy upsert (also updates every existing row from the
+  CSV). Use it for backfills, after parsing/field changes, or if old rows look
+  wrong — not for the daily sync.
+- **Idempotent either way:** de-dupes within the CSV and merges on
+  `Workout_timestamp`, so re-running against the same CSV produces 0 new rows.
 
 **How Mandy/agents import a CSV:** after a `Big__Cheese_workouts*.csv` lands in
 `~/Downloads`, run `./peloton-sync.sh --dry-run` first, sanity-check the
-create/update counts, then run `./peloton-sync.sh` to commit. **Never** write
+`would_create` / `would_skip_existing` counts, then run `./peloton-sync.sh` to
+commit. Only add `--full` if Rick explicitly asks for a full re-sync. **Never** write
 Peloton workout rows via the Airtable MCP (`create_records_for_table`) directly —
 that path has no dedup guard and is what produced duplicate workouts. The
 Airtable MCP is fine for *reads*; all *writes* go through `./peloton-sync.sh`.
@@ -61,10 +71,11 @@ agents (e.g. Mandy) without the Airtable UI.
 - Limit scope: `./peloton-match.sh --recent N`
 - Requires: `AIRTABLE_TOKEN` in `~/.env` — **needed even for `--dry-run`** (the
   matcher reads live data to score).
-- Behavior: always writes `MatchScore`; auto-links (`LinkedRide`) + sets
-  `MatchLock` when an unlinked, unlocked workout has a confident, unambiguous
-  best match (score ≥ 80); locks already-linked rows; never re-links a locked
-  row. Idempotent.
+- Behavior: always computes `MatchScore` (but skips the write when the stored
+  score already matches and nothing else changes, so re-runs don't rewrite every
+  row); auto-links (`LinkedRide`) + sets `MatchLock` when an unlinked, unlocked
+  workout has a confident, unambiguous best match (score ≥ 80); locks
+  already-linked rows; never re-links a locked row. Idempotent.
 - Scoring/threshold details live in `README.md` (Workflow 2b) and the
   `Peloton_Match.py` docstring.
 

@@ -271,10 +271,18 @@ Or specify a CSV path explicitly:
 ./peloton-sync.sh "/path/to/workouts.csv"
 ```
 
-Dry run (parses and prints the first record payload, no writes to Airtable):
+Dry run (reports would-create/update/skip counts and the first new record
+payload, no writes to Airtable):
 
 ```bash
 ./peloton-sync.sh --dry-run
+```
+
+Full upsert — also rewrites every existing row from the CSV (backfills, or
+after changing how fields are parsed; not needed for the daily sync):
+
+```bash
+./peloton-sync.sh --full
 ```
 
 ### What the import does
@@ -283,8 +291,13 @@ Dry run (parses and prints the first record payload, no writes to Airtable):
 - Normalizes column names (handles multiple Peloton export format variations)
 - Deduplicates within the CSV by `Workout_timestamp`
 - Resolves instructor names to linked Airtable record IDs via the Instructor lookup table
-- **Upserts** into Airtable: updates existing records by timestamp, creates new ones
-- Prints a JSON summary on completion
+- **Incremental by default**: matches CSV rows to existing Airtable records by
+  `Workout_timestamp` and only **creates** the rows that aren't in Airtable yet.
+  Existing rows are skipped, so a daily run against the full-history CSV writes
+  only the new workouts.
+- With `--full`: legacy **upsert** — updates every existing record from the CSV
+  as well as creating new ones
+- Prints a JSON summary on completion (`created` / `updated` / `skipped_existing`)
 
 ### Running the dedup script
 
@@ -336,8 +349,11 @@ any agent (e.g. Mandy) can run it from the command line.
 ```
 
 `peloton-sync.sh` runs `peloton-match.sh` automatically after a successful
-(non-dry-run) import, so a normal CSV sync now also links the new workouts. The
-matcher is best-effort there: if it fails, the import still succeeds.
+(non-dry-run) import, so a normal CSV sync now also links the new workouts.
+By default it passes `--unlinked-only` (new workouts are unlinked, and locked
+rows don't need re-scoring); `./peloton-sync.sh --full` runs the full matcher
+instead. The matcher is best-effort there: if it fails, the import still
+succeeds.
 
 A token is required even for `--dry-run`, because scores are computed from live
 Airtable data (it reads both tables).
@@ -346,7 +362,9 @@ Airtable data (it reads both tables).
 
 For every Peloton workout, it scores every Peloton-Rides record and:
 
-- Always writes `MatchScore` (best candidate's score), so partial matches are visible.
+- Always computes `MatchScore` (best candidate's score), so partial matches are
+  visible — but skips the write when the stored score already matches and
+  nothing else changes, so re-runs don't rewrite every row.
 - Auto-links (`LinkedRide`) **and** sets `MatchLock` when an unlinked, unlocked
   workout has a confident, unambiguous best match (score ≥ 80).
 - Sets `MatchLock` on records that already have a `LinkedRide`, so a future run

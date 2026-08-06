@@ -91,7 +91,7 @@ to field names) to run against another base.
 ### 1. Clone the repo
 
 ```bash
-git clone git@github.com:richardarmbrust/sync-peloton-airtable.git
+git clone git@github.com:rickarm/sync-peloton-airtable.git
 cd sync-peloton-airtable
 ```
 

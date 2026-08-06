@@ -6,9 +6,13 @@ What it does
 ------------
 - Reads a Peloton workout export CSV
 - Normalizes common Peloton column names
-- Upserts records into the Airtable "Peloton" table using Workout_timestamp as the merge key
+- By default, imports **incrementally**: only creates rows whose
+  Workout_timestamp is not already in Airtable (existing rows are left alone)
+- With --full, upserts every CSV row (updates existing records too) — use for
+  backfills or after changing how fields are parsed
 - Writes in Airtable batches of 10 records
-- Supports dry-run mode
+- Supports dry-run mode (reports would-create/would-update counts when a token
+  is available)
 - Emits a small summary at the end
 
 How to run
@@ -439,21 +443,30 @@ def upsert_records(
     instructor_table_id: str,
     records: List[Dict[str, Any]],
     dry_run: bool = False,
-) -> Tuple[int, int]:
+    full: bool = False,
+) -> Dict[str, int]:
     """
-    Manual upsert: fetches existing records first, then updates by record ID
-    or creates new records. Avoids Airtable's upsert API limitation when the
-    table contains duplicate merge-key values.
+    Default (incremental): fetches the existing merge-key map, then only
+    CREATES rows whose Workout_timestamp is not already in Airtable. Rows that
+    already exist are skipped, so a daily run against the full-history CSV
+    writes only the new workouts.
 
-    Returns: (batches_sent, api_errors)
+    full=True: legacy upsert — also PATCHes every existing row from the CSV.
+    Fetches existing records by ID first, avoiding Airtable's upsert API
+    limitation when the table contains duplicate merge-key values.
+
+    Returns counts: {created, updated, skipped_existing, batches_sent, api_errors}
     """
+    result = {"created": 0, "updated": 0, "skipped_existing": 0,
+              "batches_sent": 0, "api_errors": 0}
     if not records:
-        return 0, 0
+        return result
 
-    if dry_run:
+    if dry_run and not token:
+        # Offline dry-run: no API access, just show the first parsed payload.
         first = {k: v for k, v in records[0].items() if not k.startswith("_")}
         print(json.dumps({"dry_run_first_record": first}, indent=2))
-        return 0, 0
+        return result
 
     url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
     session = requests.Session()
@@ -468,16 +481,31 @@ def upsert_records(
     existing = fetch_existing_records(session, base_id, table_id)
     eprint(f"Found {len(existing)} existing records in Airtable.")
 
-    eprint("Fetching instructor lookup table...")
-    instructor_map = fetch_instructor_map(session, base_id, instructor_table_id)
-    eprint(f"Loaded {len(instructor_map)} instructors.")
-    unmatched_instructors: set = set()
-
     to_update: List[Dict[str, Any]] = []  # {"id": rec_id, "fields": {...}}
     to_create: List[Dict[str, Any]] = []  # {"fields": {...}}
 
     for fields in records:
-        # Resolve instructor name → linked record ID
+        ts = fields.get(MERGE_FIELD_ID)
+        norm = normalize_ts(ts) if ts else None
+        if norm and norm in existing:
+            if full:
+                to_update.append({"id": existing[norm], "fields": fields})
+            else:
+                result["skipped_existing"] += 1
+        else:
+            to_create.append({"fields": fields})
+
+    # Resolve instructor names → linked record IDs, but only for rows we are
+    # actually going to write (skipped rows don't need the lookup table).
+    to_write = [r["fields"] for r in to_update] + [r["fields"] for r in to_create]
+    unmatched_instructors: set = set()
+    if any("_instructor_name" in f for f in to_write):
+        eprint("Fetching instructor lookup table...")
+        instructor_map = fetch_instructor_map(session, base_id, instructor_table_id)
+        eprint(f"Loaded {len(instructor_map)} instructors.")
+    else:
+        instructor_map = {}
+    for fields in to_write:
         raw_name = fields.pop("_instructor_name", None)
         if raw_name:
             normalized = INSTRUCTOR_NAME_ALIASES.get(raw_name, raw_name)
@@ -486,17 +514,24 @@ def upsert_records(
                 fields[FIELD_IDS["InstructorName"]] = [rec_id]
             else:
                 unmatched_instructors.add(raw_name)
-        ts = fields.get(MERGE_FIELD_ID)
-        norm = normalize_ts(ts) if ts else None
-        if norm and norm in existing:
-            to_update.append({"id": existing[norm], "fields": fields})
-        else:
-            to_create.append({"fields": fields})
+
+    if dry_run:
+        preview: Dict[str, Any] = {
+            "dry_run": True,
+            "mode": "full" if full else "incremental",
+            "would_create": len(to_create),
+            "would_update": len(to_update),
+            "would_skip_existing": result["skipped_existing"],
+        }
+        if to_create:
+            preview["first_new_record"] = to_create[0]["fields"]
+        print(json.dumps(preview, indent=2))
+        return result
 
     batches_sent = 0
     api_errors = 0
 
-    # Updates (PATCH with explicit record IDs)
+    # Updates (PATCH with explicit record IDs) — full mode only
     for batch in chunked(to_update, 10):
         payload = {"records": batch, "typecast": True}
         resp = airtable_request(session, "PATCH", url, json_payload=payload)
@@ -518,10 +553,16 @@ def upsert_records(
         else:
             batches_sent += 1
 
-    eprint(f"Updated: {len(to_update)} records, Created: {len(to_create)} records.")
+    result["created"] = len(to_create)
+    result["updated"] = len(to_update)
+    result["batches_sent"] = batches_sent
+    result["api_errors"] = api_errors
+
+    eprint(f"Created: {len(to_create)}, Updated: {len(to_update)}, "
+           f"Skipped (already in Airtable): {result['skipped_existing']}.")
     if unmatched_instructors:
         eprint(f"Warning: no Airtable match for instructor(s): {sorted(unmatched_instructors)}")
-    return batches_sent, api_errors
+    return result
 
 
 def main() -> int:
@@ -531,8 +572,9 @@ def main() -> int:
     parser.add_argument("--table-id", default=TABLE_ID, help="Airtable table ID for Peloton; defaults to peloton-sync.conf")
     parser.add_argument("--instructor-table-id", default=INSTRUCTOR_TABLE_ID, help="Airtable table ID for the instructor lookup; defaults to peloton-sync.conf")
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var")
-    parser.add_argument("--dry-run", action="store_true", help="Parse and print the first record payload, but do not write to Airtable")
+    parser.add_argument("--dry-run", action="store_true", help="Report what would be created/updated (and print the first new record payload), but do not write to Airtable")
     parser.add_argument("--recent", type=int, default=None, metavar="N", help="Only process the N most recent workouts from the CSV")
+    parser.add_argument("--full", action="store_true", help="Also update every existing row from the CSV (legacy upsert). Default is incremental: only create rows not yet in Airtable")
     args = parser.parse_args()
 
     if not args.token and not args.dry_run:
@@ -584,21 +626,26 @@ def main() -> int:
 
     stats.rows_prepared = len(airtable_field_records)
 
-    batches_sent, api_errors = upsert_records(
+    write_result = upsert_records(
         token=args.token or "",
         base_id=args.base_id,
         table_id=args.table_id,
         instructor_table_id=args.instructor_table_id,
         records=airtable_field_records,
         dry_run=args.dry_run,
+        full=args.full,
     )
-    stats.batches_sent = batches_sent
-    stats.api_errors = api_errors
+    stats.batches_sent = write_result["batches_sent"]
+    stats.api_errors = write_result["api_errors"]
 
     summary = {
+        "mode": "full" if args.full else "incremental",
         "rows_read": stats.rows_read,
         "rows_skipped_missing_key": stats.rows_skipped_missing_key,
         "rows_prepared": stats.rows_prepared,
+        "created": write_result["created"],
+        "updated": write_result["updated"],
+        "skipped_existing": write_result["skipped_existing"],
         "batches_sent": stats.batches_sent,
         "api_errors": stats.api_errors,
         "table_id": args.table_id,

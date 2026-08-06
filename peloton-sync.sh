@@ -22,12 +22,14 @@ TABLE_ID="$PELOTON_TABLE_ID"
 DRY_RUN=""
 CSV_PATH=""
 RECENT_ARG=""
+FULL=""
 
 # Parse args
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN="--dry-run" ;;
     --recent=*) RECENT_ARG="--recent ${arg#--recent=}" ;;
+    --full) FULL="--full" ;;
     *) CSV_PATH="$arg" ;;
   esac
 done
@@ -86,17 +88,22 @@ python3 "$PYTHON_SCRIPT" \
   --csv "$CSV_PATH" \
   ${DRY_RUN:-} \
   ${TOKEN_ARG:-} \
-  ${RECENT_ARG:-}
+  ${RECENT_ARG:-} \
+  ${FULL:-}
 IMPORT_STATUS=$?
 set -e
 
 # After a successful real import, link the new workouts to their class metadata.
+# Default: --unlinked-only (new workouts are unlinked; locked rows are skipped).
+# --full re-scores everything, e.g. after scoring changes or new ride metadata.
 # Best-effort: a matcher failure must not fail the import.
 if [ "$IMPORT_STATUS" -eq 0 ] && [ -z "$DRY_RUN" ]; then
   MATCH_SCRIPT="$SCRIPT_DIR/peloton-match.sh"
   if [ -x "$MATCH_SCRIPT" ] || [ -f "$MATCH_SCRIPT" ]; then
     echo "Running Peloton -> Peloton-Rides matcher..."
-    bash "$MATCH_SCRIPT" || echo "Warning: matcher failed (import still succeeded)."
+    MATCH_ARGS=""
+    [ -z "$FULL" ] && MATCH_ARGS="--unlinked-only"
+    bash "$MATCH_SCRIPT" ${MATCH_ARGS:-} || echo "Warning: matcher failed (import still succeeded)."
   fi
 fi
 

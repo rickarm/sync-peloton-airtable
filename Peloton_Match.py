@@ -11,8 +11,9 @@ What it does
 For every record in the Peloton (workout history) table, it scores every
 Peloton-Rides (class metadata) record as a candidate and:
 
-  - Always writes MatchScore (the best candidate's score), so partial matches
-    are visible.
+  - Always computes MatchScore (the best candidate's score), so partial matches
+    are visible. The write is skipped when the stored score already matches and
+    nothing else changes, so re-runs don't rewrite every row.
   - Auto-links (sets LinkedRide) + sets MatchLock when an unlinked, unlocked
     workout has a confident, unambiguous best match (score >= 80).
   - Locks (MatchLock) records that already have a LinkedRide so a future run
@@ -233,6 +234,14 @@ def classify_unlinked(best_score: float, second_score: Optional[float]) -> str:
         and (best_score - second_score) <= 5
     )
     return "ambiguous" if ambiguous else "auto-match"
+
+
+def score_value(v: Any) -> Optional[float]:
+    """Normalize a MatchScore for comparison (Airtable may return int or float)."""
+    try:
+        return None if v is None else round(float(v), 6)
+    except (TypeError, ValueError):
+        return None
 
 
 def linked_ride_value(ride_id: str) -> List[str]:
@@ -497,7 +506,17 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         "no_candidate": 0,
         "missing_date": 0,
         "skipped_locked": 0,
+        "unchanged": 0,
     }
+
+    # MatchLock and LinkedRide are only added to an update when they change
+    # state, so an update is a no-op exactly when it carries only a MatchScore
+    # equal to the one already stored. Skipping those keeps re-runs from
+    # rewriting every row.
+    def is_noop(current_fields: Dict[str, Any], new_fields: Dict[str, Any]) -> bool:
+        return (set(new_fields) == {P_MATCH_SCORE}
+                and score_value(current_fields.get(P_MATCH_SCORE))
+                == score_value(new_fields[P_MATCH_SCORE]))
 
     for rec in workout_recs:
         f = rec.get("fields", {})
@@ -532,7 +551,10 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
                 fields[P_MATCH_LOCK] = True
                 counts["locked"] += 1
             counts["no_candidate"] += 1
-            updates.append({"id": rec_id, "fields": fields})
+            if is_noop(f, fields):
+                counts["unchanged"] += 1
+            else:
+                updates.append({"id": rec_id, "fields": fields})
             rows.append({"taken": taken, "class_date": class_when, "title": title,
                          "action": "no candidate", "score": None, "ride": ""})
             eprint(f"  [no candidate] taken {taken} | {title} (class {class_when})")
@@ -566,7 +588,10 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
                 action = "score too low"
                 counts["scored_only"] += 1
 
-        updates.append({"id": rec_id, "fields": fields})
+        if is_noop(f, fields):
+            counts["unchanged"] += 1
+        else:
+            updates.append({"id": rec_id, "fields": fields})
         rows.append({"taken": taken, "class_date": class_when, "title": title,
                      "action": action, "score": best["score"], "ride": best["ride_title"]})
         eprint(f"  [{action}] taken {taken} | {title} -> {best['ride_title']} "

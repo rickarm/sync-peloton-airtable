@@ -26,6 +26,7 @@ Workflows:
 |---|---|---|
 | Python CSV Import | `AIRTABLE_TOKEN` (Airtable personal access token) | `~/.env` (never committed) |
 | Class Scraper | `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `~/.env` (never committed) |
+| Workout ID lookup (optional) | a working `peloton-workout-extract` checkout; its own 1Password token | path via `PELOTON_WORKOUT_IDS_CMD` in `peloton-sync.conf` |
 
 Nothing sensitive is hardcoded in any script.
 
@@ -37,6 +38,7 @@ Nothing sensitive is hardcoded in any script.
 sync-peloton-airtable/
 ├── peloton-claude-sync.sh           # (RETIRED) old launchd watcher entry point — reference only
 ├── peloton-sync.sh                  # Python-based CSV import entry point (runs the matcher after import)
+├── workout_id_lookup.py             # Resolves Peloton_Workout_ID (shells out to peloton-workout-extract)
 ├── peloton-match.sh                 # Workout ↔ class matcher entry point (agent-runnable)
 ├── Peloton_Airtable_Import.py       # Reads CSV, imports new workouts into Airtable (incremental; --full upserts)
 ├── Peloton_Match.py                 # Links Peloton workouts to Peloton-Rides class metadata

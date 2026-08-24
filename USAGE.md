@@ -135,6 +135,20 @@ first new record's payload for a spot-check:
 
 ## peloton-match.sh — Link workouts to class metadata
 
+Links each workout to its `Peloton-Rides` class row so the workout inherits the
+class's per-zone breakdown. Two paths, in order:
+
+1. **By class ID (deterministic).** The workout's `Peloton_Workout_ID` is
+   resolved through the Peloton API to the class it was actually taken from.
+   Used whenever exactly one `Peloton-Rides` row claims that `ClassID`. No score
+   is consulted.
+2. **By score (fallback).** Similarity across instructor, duration, title, time
+   proximity and Power Zone type, auto-linking at >= 80. Used for pre-workout-ID
+   history, and wherever several rows claim the same `ClassID`.
+
+`--no-class-ids` skips path 1 entirely. The lookup is best-effort: a missing
+helper or expired Peloton session degrades to scoring with a warning.
+
 Links **Peloton** workout records to their **Peloton-Rides** class metadata
 (`LinkedRide`) so each workout inherits the class's Power Zone breakdown. Safe
 for agents (e.g. Mandy) to run. Idempotent — re-running never re-links locked

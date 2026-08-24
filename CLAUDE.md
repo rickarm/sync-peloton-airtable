@@ -88,15 +88,31 @@ agents (e.g. Mandy) without the Airtable UI.
   matcher reads live data to score).
 - Behavior: always computes `MatchScore` (but skips the write when the stored
   score already matches and nothing else changes, so re-runs don't rewrite every
-  row); auto-links (`LinkedRide`) + sets `MatchLock` when an unlinked, unlocked
-  workout has a confident, unambiguous best match (score ≥ 80); locks
+  row); **links by class ID when it can, by score only when it must**; locks
   already-linked rows; never re-links a locked row. Idempotent.
+- **The deterministic path comes first.** If the workout carries a
+  `Peloton_Workout_ID` and the Peloton API says which class it was, and exactly
+  one `Peloton-Rides` row claims that `ClassID`, the link is written with no
+  regard to the score. `ride.id` is what Peloton itself recorded; a score is a
+  guess. A score of **105** has already attached a workout to the wrong class in
+  the live base (two same-titled endurance rides that aired a day apart), so a
+  high score is not evidence of a correct link.
+- **Ambiguity falls back to scoring rather than guessing.** 8 `ClassID`s in the
+  live table are claimed by more than one row — the scraper wrote the same class
+  twice under different `ClassTimestamp` offset labels, and that field is the
+  primary key. The matcher reports the count and declines to pick. Deduplicating
+  those rows is not the matcher's job.
+- The class lookup is **best-effort**, like the import's ID lookup: a missing
+  helper or an expired Peloton session logs a warning and falls back to pure
+  scoring. `--no-class-ids` disables it outright for offline runs.
+- New counters in the JSON summary: `linked_by_class_id` and
+  `class_id_ambiguous`.
 - Scoring/threshold details live in `README.md` (Workflow 2b) and the
   `Peloton_Match.py` docstring.
 
 **How Mandy/agents run this:** when asked to "run the Peloton matcher" or after
 a CSV import, run `./peloton-match.sh --dry-run` first, sanity-check the JSON
-summary (especially `auto_matched` and `ambiguous`), then run `./peloton-match.sh`
+summary (especially `linked_by_class_id`, `auto_matched` and `ambiguous`), then run `./peloton-match.sh`
 to commit. Report the JSON summary back.
 
 ### Workflow 3: Class Scraper

@@ -78,6 +78,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 # Base/table IDs come from peloton-sync.conf (overridable via
 # ~/.peloton-sync.conf, env vars, or the CLI flags below).
 
+import workout_id_lookup
 from peloton_config import load_config
 
 _CFG = load_config()
@@ -85,6 +86,7 @@ BASE_ID = _CFG.get("AIRTABLE_BASE_ID", "")
 PELOTON_TABLE_ID = _CFG.get("PELOTON_TABLE_ID", "")       # Peloton (workout history)
 RIDES_TABLE_ID = _CFG.get("PELOTON_RIDES_TABLE_ID", "")   # Peloton-Rides (class metadata)
 TYPE_TABLE_ID = _CFG.get("PELOTON_TYPE_TABLE_ID", "")     # Peloton_type (for Power Zone hint)
+WORKOUT_IDS_CMD = _CFG.get("PELOTON_WORKOUT_IDS_CMD", "")  # sibling extract repo helper
 
 # Thresholds
 AUTO_MATCH_THRESHOLD = 80          # mirrors the extension
@@ -102,10 +104,12 @@ P_INSTRUCTOR = "InstructorName"
 P_LENGTH = "Length"
 P_DISCIPLINE = "FitnessDiscipline"
 P_TYPE = "Type"
+P_WORKOUT_ID = "Peloton_Workout_ID"     # Peloton's own id; the deterministic class join
 
 PELOTON_FIELDS = [
     P_LINKED_RIDE, P_MATCH_LOCK, P_MATCH_SCORE, P_WORKOUT_TS, P_CLASS_TS_STRING,
     P_CLASS_TS_DATE, P_TITLE, P_INSTRUCTOR, P_LENGTH, P_DISCIPLINE, P_TYPE,
+    P_WORKOUT_ID,
 ]
 
 # Peloton-Rides field names
@@ -299,6 +303,49 @@ class Ride:
         self.class_id = as_string(f, R_CLASS_ID)
 
 
+def build_class_index(rides: List["Ride"]) -> Dict[str, List[str]]:
+    """Map a Peloton class ID to the Peloton-Rides rows that claim it.
+
+    A list rather than a single id on purpose: the table currently holds
+    several rows per class, minted when the scraper wrote the same class under
+    two different `ClassTimestamp` values (its offset label is unreliable, so
+    the same air time could land as both `(-08)` and `(-05)`). Picking one of
+    those arbitrarily would silently attach a workout to whichever duplicate
+    sorted first, so an ambiguous class ID falls through to scoring instead.
+    """
+    index: Dict[str, List[str]] = {}
+    for ride in rides:
+        if ride.class_id:
+            index.setdefault(ride.class_id, []).append(ride.id)
+    return index
+
+
+def deterministic_ride_id(
+    workout_id: Optional[str],
+    class_map: Dict[str, Optional[str]],
+    class_index: Dict[str, List[str]],
+) -> Tuple[Optional[str], str]:
+    """Resolve a workout to its class row by ID, never by similarity.
+
+    Returns `(ride_id, reason)`. `ride_id` is None whenever the answer is not
+    unambiguous, and `reason` says which of the several distinct "no" cases
+    applies so the caller can count them separately.
+    """
+    if not workout_id:
+        return None, "no workout id"
+    if workout_id not in class_map:
+        return None, "workout id not in export"
+    class_id = class_map[workout_id]
+    if not class_id:
+        return None, "workout took no class"
+    candidates = class_index.get(class_id) or []
+    if not candidates:
+        return None, "class not in Peloton-Rides"
+    if len(candidates) > 1:
+        return None, f"class id claimed by {len(candidates)} rows"
+    return candidates[0], "class id"
+
+
 def score_match(wf: Dict[str, Any], wdate: datetime, type_map: Dict[str, str],
                 ride: Ride) -> Dict[str, Any]:
     score = 0
@@ -457,9 +504,33 @@ def chunked(items: list, size: int) -> Iterable[list]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def load_class_map(enabled: bool, helper_cmd: Optional[str]) -> Dict[str, Optional[str]]:
+    """Best-effort {workout_id: class_id} from the sibling extract repo.
+
+    Best-effort for the same reason the import's ID lookup is: the matcher must
+    still run when the helper is missing or the Peloton session has expired. A
+    failure here costs the deterministic path and falls back to scoring, which
+    is exactly the behaviour that existed before.
+    """
+    if not enabled:
+        return {}
+    helper = workout_id_lookup.resolve_helper(helper_cmd)
+    if not helper:
+        eprint("No workout-ID helper found; linking by score only.")
+        return {}
+    try:
+        class_map = workout_id_lookup.fetch_class_map(helper)
+    except workout_id_lookup.WorkoutIdLookupError as exc:
+        eprint(f"Warning: class lookup failed ({exc}); linking by score only.")
+        return {}
+    eprint(f"Loaded class IDs for {len(class_map)} workouts from the Peloton API.")
+    return class_map
+
+
 def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         type_table_id: str, dry_run: bool, unlinked_only: bool,
-        recent: Optional[int]) -> Dict[str, Any]:
+        recent: Optional[int], class_ids: bool = True,
+        workout_ids_cmd: Optional[str] = None) -> Dict[str, Any]:
     import requests
     session = requests.Session()
     session.headers.update({
@@ -474,6 +545,14 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
     rides = [Ride(r) for r in ride_recs]
     eprint(f"Loaded {len(workout_recs)} workouts, {len(rides)} rides, "
            f"{len(type_map)} types.")
+
+    class_map = load_class_map(class_ids, workout_ids_cmd)
+    class_index = build_class_index(rides)
+    ride_titles = {r.id: r.title for r in rides}
+    contested = {cid: rows for cid, rows in class_index.items() if len(rows) > 1}
+    if contested:
+        eprint(f"Note: {len(contested)} class IDs are claimed by more than one "
+               f"Peloton-Rides row; those fall back to scoring.")
 
     # Two distinct dates per workout:
     #  - match_date: when the CLASS aired — the join key against Peloton-Rides.
@@ -507,6 +586,8 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
         "missing_date": 0,
         "skipped_locked": 0,
         "unchanged": 0,
+        "linked_by_class_id": 0,
+        "class_id_ambiguous": 0,
     }
 
     # MatchLock and LinkedRide are only added to an update when they change
@@ -575,18 +656,35 @@ def run(token: str, base_id: str, peloton_table_id: str, rides_table_id: str,
             action = "locked, scored only"
             counts["scored_only"] += 1
         else:
-            decision = classify_unlinked(best["score"], second["score"] if second else None)
-            if decision == "auto-match":
-                fields[P_LINKED_RIDE] = linked_ride_value(best["ride_id"])
+            # `ride.id` is what Peloton itself recorded, so when it resolves to
+            # exactly one row it beats any score — including a confident-looking
+            # one. A 105 has already attached a workout to the wrong class here,
+            # two same-titled endurance rides that aired a day apart.
+            certain_ride_id, why = deterministic_ride_id(
+                as_string(f, P_WORKOUT_ID) or None, class_map, class_index
+            )
+            if certain_ride_id:
+                fields[P_LINKED_RIDE] = linked_ride_value(certain_ride_id)
                 fields[P_MATCH_LOCK] = True
-                counts["auto_matched"] += 1
-                action = "auto-matched, locked"
-            elif decision == "ambiguous":
-                action = "ambiguous, scored only"
-                counts["ambiguous"] += 1
+                counts["linked_by_class_id"] += 1
+                action = "linked by class id, locked"
+                best = dict(best, ride_id=certain_ride_id,
+                            ride_title=ride_titles.get(certain_ride_id, ""))
             else:
-                action = "score too low"
-                counts["scored_only"] += 1
+                if why.endswith("rows"):
+                    counts["class_id_ambiguous"] += 1
+                decision = classify_unlinked(best["score"], second["score"] if second else None)
+                if decision == "auto-match":
+                    fields[P_LINKED_RIDE] = linked_ride_value(best["ride_id"])
+                    fields[P_MATCH_LOCK] = True
+                    counts["auto_matched"] += 1
+                    action = "auto-matched, locked"
+                elif decision == "ambiguous":
+                    action = "ambiguous, scored only"
+                    counts["ambiguous"] += 1
+                else:
+                    action = "score too low"
+                    counts["scored_only"] += 1
 
         if is_noop(f, fields):
             counts["unchanged"] += 1
@@ -642,6 +740,11 @@ def main() -> int:
                         help="Skip records that are already locked (faster)")
     parser.add_argument("--recent", type=int, default=None,
                         help="Only process the N most-recent workouts")
+    parser.add_argument("--no-class-ids", action="store_true",
+                        help="Skip the Peloton API class lookup and link by score only "
+                             "(offline runs, or when the extract repo is unavailable)")
+    parser.add_argument("--workout-ids-cmd", default=WORKOUT_IDS_CMD or None,
+                        help="Path to the sibling repo's peloton-workout-ids.sh")
     args = parser.parse_args()
 
     if not args.token:
@@ -669,6 +772,8 @@ def main() -> int:
         dry_run=args.dry_run,
         unlinked_only=args.unlinked_only,
         recent=args.recent,
+        class_ids=not args.no_class_ids,
+        workout_ids_cmd=args.workout_ids_cmd,
     )
 
     print(json.dumps(summary, indent=2))

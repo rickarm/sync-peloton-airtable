@@ -130,6 +130,20 @@ def fetch_workout_id_map(
     runner: Optional[Callable[..., subprocess.CompletedProcess]] = None,
 ) -> Dict[str, str]:
     """Run the helper and return {normalized merge key: workout_id}."""
+    return _run_helper(
+        helper, since, timeout, runner,
+        lambda payload: parse_helper_output(payload, normalize=normalize),
+    )
+
+
+def _run_helper(
+    helper: str,
+    since: Optional[str],
+    timeout: int,
+    runner: Optional[Callable[..., subprocess.CompletedProcess]],
+    parse: Callable[[str], dict],
+) -> dict:
+    """Invoke the helper once and hand its stdout to `parse`."""
     cmd = build_command(helper, since=since)
     run = runner or subprocess.run
     try:
@@ -144,4 +158,47 @@ def fetch_workout_id_map(
         tail = detail[-1] if detail else f"exit {proc.returncode}"
         raise WorkoutIdLookupError(f"helper failed: {tail}")
 
-    return parse_helper_output(proc.stdout, normalize=normalize)
+    return parse(proc.stdout)
+
+
+def parse_class_map(payload: str) -> Dict[str, Optional[str]]:
+    """Map workout ID to the ID of the class it was taken from.
+
+    The same helper output that carries workout IDs already carries the class
+    join, because the export asks the API for `joins=ride`. So the deterministic
+    workout-to-class link costs no extra request beyond the one the ID lookup
+    already makes.
+
+    A workout with no class (freestyle, Apple Health — Peloton stamps those with
+    an all-zero ride id, which the helper already maps to null) is kept with a
+    value of None rather than dropped, so callers can tell "took no class" apart
+    from "not in the export".
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise WorkoutIdLookupError(f"helper did not emit JSON: {exc}") from exc
+
+    workouts = data.get("workouts")
+    if not isinstance(workouts, list):
+        raise WorkoutIdLookupError("helper JSON has no 'workouts' list")
+
+    mapping: Dict[str, Optional[str]] = {}
+    for record in workouts:
+        if not isinstance(record, dict):
+            continue
+        workout_id = record.get("workout_id")
+        if not workout_id:
+            continue
+        mapping.setdefault(workout_id, record.get("class_id"))
+    return mapping
+
+
+def fetch_class_map(
+    helper: str,
+    since: Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    runner: Optional[Callable[..., subprocess.CompletedProcess]] = None,
+) -> Dict[str, Optional[str]]:
+    """Run the helper and return {workout_id: class_id or None}."""
+    return _run_helper(helper, since, timeout, runner, parse_class_map)

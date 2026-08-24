@@ -1,6 +1,6 @@
 # Usage Reference
 
-Quick-reference for all commands. See [README.md](README.md) for setup and full context.
+Quick-reference for all commands. See [README.md](README.md) for setup and full context, or [SETUP.md](SETUP.md) to set up against your own Peloton account and Airtable base.
 
 ---
 

@@ -91,8 +91,19 @@ Set every value for **your** account and base:
 ./peloton-sync.sh
 ```
 
-Re-running is always safe: the importer upserts on `Workout_timestamp`, so the
-same CSV twice produces zero duplicates.
+Re-running is always safe. `Workout_timestamp` is the merge key, and the
+default run is **incremental** — it creates only the workouts not already in
+Airtable and leaves existing rows untouched, so the same CSV twice produces
+zero duplicates. Adding `--full` switches to the legacy upsert, which also
+rewrites every existing row from the CSV; you want that only for a repair or
+a backfill. See [README.md](README.md) for the full comparison.
+
+> **`Warning: workout ID lookup failed ... continuing without
+> Peloton_Workout_ID`** on your first run is expected and harmless. Filling
+> that field needs the sibling
+> [peloton-workout-extract](https://github.com/rickarm/peloton-workout-extract)
+> repo, which is optional. The import completes normally without it; pass
+> `--no-workout-ids` to skip the lookup and silence the warning.
 
 ## 6. Class matching (Power Zone data)
 
@@ -147,6 +158,7 @@ linked field on the other table is created.
 | `PowerZone-Type` | Lookup via `LinkedRide` → `PowerZoneType` | |
 | `Z2/Z3` | Lookup via `LinkedRide` → ride `Z2/Z3` | |
 | `Z5+` | Lookup via `LinkedRide` → ride `Z5+` | |
+| `Peloton_Workout_ID` | Single line text | Peloton's own workout ID — written by importer |
 | `FTP-at-Time` | Number (0 dp) | manual — your FTP when the ride was taken |
 | `OutputPerMinute` | Formula: `{TotalOutput}/{Length}` (1 dp) | |
 

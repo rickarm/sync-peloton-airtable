@@ -6,9 +6,13 @@ What it does
 ------------
 - Reads a Peloton workout export CSV
 - Normalizes common Peloton column names
-- Upserts records into the Airtable "Peloton" table using Workout_timestamp as the merge key
+- By default, imports **incrementally**: only creates rows whose
+  Workout_timestamp is not already in Airtable (existing rows are left alone)
+- With --full, upserts every CSV row (updates existing records too) — use for
+  backfills or after changing how fields are parsed
 - Writes in Airtable batches of 10 records
-- Supports dry-run mode
+- Supports dry-run mode (reports would-create/would-update counts when a token
+  is available)
 - Emits a small summary at the end
 
 How to run
@@ -46,7 +50,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 
@@ -59,10 +63,13 @@ import requests
 
 from peloton_config import load_config
 
+import workout_id_lookup
+
 _CFG = load_config()
 BASE_ID = _CFG.get("AIRTABLE_BASE_ID", "")
 TABLE_ID = _CFG.get("PELOTON_TABLE_ID", "")
 INSTRUCTOR_TABLE_ID = _CFG.get("PELOTON_INSTRUCTOR_TABLE_ID", "")
+WORKOUT_IDS_CMD = _CFG.get("PELOTON_WORKOUT_IDS_CMD", "")
 
 # Your Peloton table field IDs from the current base schema.
 INSTRUCTOR_NAME_FIELD_ID = "fldfA0KxrFEfYpVQM"
@@ -88,6 +95,7 @@ FIELD_IDS = {
     "CaloriesBurned": "fldf59N7qMNRWTYvz",
     "AvgHeartrate": "fldKBT7Li6cw4DKau",
     "InstructorName": "fldyBTp2009qXtVsr",
+    "Peloton_Workout_ID": "fldiRWeHOnx99NWnH",
 }
 
 MERGE_FIELD_ID = FIELD_IDS["Workout_timestamp"]
@@ -96,15 +104,35 @@ MERGE_FIELD_ID = FIELD_IDS["Workout_timestamp"]
 def normalize_ts(ts: str) -> str:
     """Normalize timestamp to 'YYYY-MM-DD HH:MM' for merge-key comparison.
 
-    Handles both Peloton CSV format ("2026-03-10 13:11 (-07)") and
-    ISO format ("2026-03-10T13:11:00") so old and new records match.
+    Handles the Peloton CSV forms ("2026-03-10 13:11 (-07)",
+    "2022-03-24 07:43 (PDT)") and the ISO form ("2026-03-10T13:11:00") so old
+    and new records match.
+
+    Two things this deliberately gets right, both of which it previously got
+    wrong:
+
+    1. The trailing timezone label is dropped whatever its shape, not just
+       numeric offsets. Peloton re-renders historical exports using the DST
+       label in force at export time, so one workout arrives as "(PDT)" in
+       summer and "(PST)" in winter. Keeping the label in the merge key made
+       those two spellings distinct, so the importer created the same workout
+       twice — the origin of the duplicate rows cleaned up in Aug 2026.
+
+    2. Only the ISO date/time separator is rewritten. The old blanket
+       `.replace("T", " ")` also ate the T inside alphabetic labels, turning
+       "(PDT)" into "(PD )" and leaving that debris in the key for 62% of rows.
+
+    Tradeoff worth naming: two genuinely different workouts recorded at the
+    same wall-clock minute on the same date in different timezones now share a
+    key. That is the same local-minute key the peloton-workout-extract repo
+    joins on, and it is far less likely than the DST flip it prevents.
     """
     if not ts:
         return ts
     s = ts.strip()
-    s = re.sub(r'\s*\([+-]\d+\)\s*$', '', s)   # strip " (-07)"
-    s = s.replace('T', ' ')                      # ISO T → space
-    s = re.sub(r'(\d{2}:\d{2}):\d{2}.*', r'\1', s)  # strip seconds
+    s = re.sub(r'\s*\([^)]*\)\s*$', '', s)            # strip " (-07)" / " (PDT)"
+    s = re.sub(r'^(\d{4}-\d{2}-\d{2})[T ]', r'\1 ', s)  # ISO separator → space
+    s = re.sub(r'(\d{2}:\d{2}):\d{2}.*', r'\1', s)     # strip seconds
     return s.strip()
 
 
@@ -432,6 +460,60 @@ def fetch_existing_records(
     return existing
 
 
+def apply_workout_ids(
+    to_write: List[Dict[str, Any]],
+    helper: Optional[str],
+    verbose: bool = True,
+) -> Dict[str, int]:
+    """Fill FIELD_IDS["Peloton_Workout_ID"] on rows we are about to write.
+
+    The CSV has no workout ID column, so this asks the Peloton API (via the
+    sibling extract repo) and joins on the normalized merge key. Best-effort:
+    any failure is reported and leaves the rows untouched, because dropping a
+    workout is far worse than dropping its ID.
+
+    Returns {"filled": n, "missing": n} — "missing" is rows the API had no
+    workout for, which is expected for anything Peloton itself never recorded.
+    """
+    outcome = {"filled": 0, "missing": 0}
+    if not to_write:
+        return outcome
+
+    keys = [normalize_ts(f.get(MERGE_FIELD_ID, "")) for f in to_write]
+    resolved = workout_id_lookup.resolve_helper(helper)
+    if not resolved:
+        if verbose:
+            eprint("Skipping workout IDs: helper not found "
+                   f"(looked for {workout_id_lookup.DEFAULT_HELPER}). "
+                   "Set PELOTON_WORKOUT_IDS_CMD or pass --workout-ids-cmd.")
+        return outcome
+
+    since = workout_id_lookup.earliest_date(keys)
+    if verbose:
+        eprint(f"Fetching workout IDs via {resolved} (since {since or 'account start'})...")
+    try:
+        id_map = workout_id_lookup.fetch_workout_id_map(
+            resolved, since=since, normalize=normalize_ts
+        )
+    except workout_id_lookup.WorkoutIdLookupError as exc:
+        if verbose:
+            eprint(f"Warning: workout ID lookup failed ({exc}); "
+                   "continuing without Peloton_Workout_ID.")
+        return outcome
+
+    for fields, key in zip(to_write, keys):
+        workout_id = id_map.get(key)
+        if workout_id:
+            fields[FIELD_IDS["Peloton_Workout_ID"]] = workout_id
+            outcome["filled"] += 1
+        else:
+            outcome["missing"] += 1
+
+    if verbose:
+        eprint(f"Workout IDs: {outcome['filled']} filled, {outcome['missing']} with no API match.")
+    return outcome
+
+
 def upsert_records(
     token: str,
     base_id: str,
@@ -439,21 +521,33 @@ def upsert_records(
     instructor_table_id: str,
     records: List[Dict[str, Any]],
     dry_run: bool = False,
-) -> Tuple[int, int]:
+    full: bool = False,
+    workout_ids: bool = True,
+    workout_ids_cmd: Optional[str] = None,
+) -> Dict[str, int]:
     """
-    Manual upsert: fetches existing records first, then updates by record ID
-    or creates new records. Avoids Airtable's upsert API limitation when the
-    table contains duplicate merge-key values.
+    Default (incremental): fetches the existing merge-key map, then only
+    CREATES rows whose Workout_timestamp is not already in Airtable. Rows that
+    already exist are skipped, so a daily run against the full-history CSV
+    writes only the new workouts.
 
-    Returns: (batches_sent, api_errors)
+    full=True: legacy upsert — also PATCHes every existing row from the CSV.
+    Fetches existing records by ID first, avoiding Airtable's upsert API
+    limitation when the table contains duplicate merge-key values.
+
+    Returns counts: {created, updated, skipped_existing, batches_sent, api_errors}
     """
+    result = {"created": 0, "updated": 0, "skipped_existing": 0,
+              "batches_sent": 0, "api_errors": 0,
+              "workout_ids_filled": 0, "workout_ids_missing": 0}
     if not records:
-        return 0, 0
+        return result
 
-    if dry_run:
+    if dry_run and not token:
+        # Offline dry-run: no API access, just show the first parsed payload.
         first = {k: v for k, v in records[0].items() if not k.startswith("_")}
         print(json.dumps({"dry_run_first_record": first}, indent=2))
-        return 0, 0
+        return result
 
     url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
     session = requests.Session()
@@ -468,16 +562,31 @@ def upsert_records(
     existing = fetch_existing_records(session, base_id, table_id)
     eprint(f"Found {len(existing)} existing records in Airtable.")
 
-    eprint("Fetching instructor lookup table...")
-    instructor_map = fetch_instructor_map(session, base_id, instructor_table_id)
-    eprint(f"Loaded {len(instructor_map)} instructors.")
-    unmatched_instructors: set = set()
-
     to_update: List[Dict[str, Any]] = []  # {"id": rec_id, "fields": {...}}
     to_create: List[Dict[str, Any]] = []  # {"fields": {...}}
 
     for fields in records:
-        # Resolve instructor name → linked record ID
+        ts = fields.get(MERGE_FIELD_ID)
+        norm = normalize_ts(ts) if ts else None
+        if norm and norm in existing:
+            if full:
+                to_update.append({"id": existing[norm], "fields": fields})
+            else:
+                result["skipped_existing"] += 1
+        else:
+            to_create.append({"fields": fields})
+
+    # Resolve instructor names → linked record IDs, but only for rows we are
+    # actually going to write (skipped rows don't need the lookup table).
+    to_write = [r["fields"] for r in to_update] + [r["fields"] for r in to_create]
+    unmatched_instructors: set = set()
+    if any("_instructor_name" in f for f in to_write):
+        eprint("Fetching instructor lookup table...")
+        instructor_map = fetch_instructor_map(session, base_id, instructor_table_id)
+        eprint(f"Loaded {len(instructor_map)} instructors.")
+    else:
+        instructor_map = {}
+    for fields in to_write:
         raw_name = fields.pop("_instructor_name", None)
         if raw_name:
             normalized = INSTRUCTOR_NAME_ALIASES.get(raw_name, raw_name)
@@ -486,17 +595,31 @@ def upsert_records(
                 fields[FIELD_IDS["InstructorName"]] = [rec_id]
             else:
                 unmatched_instructors.add(raw_name)
-        ts = fields.get(MERGE_FIELD_ID)
-        norm = normalize_ts(ts) if ts else None
-        if norm and norm in existing:
-            to_update.append({"id": existing[norm], "fields": fields})
-        else:
-            to_create.append({"fields": fields})
+
+    if workout_ids:
+        id_outcome = apply_workout_ids(to_write, workout_ids_cmd)
+        result["workout_ids_filled"] = id_outcome["filled"]
+        result["workout_ids_missing"] = id_outcome["missing"]
+
+    if dry_run:
+        preview: Dict[str, Any] = {
+            "dry_run": True,
+            "mode": "full" if full else "incremental",
+            "would_create": len(to_create),
+            "would_update": len(to_update),
+            "would_skip_existing": result["skipped_existing"],
+            "workout_ids_filled": result["workout_ids_filled"],
+            "workout_ids_missing": result["workout_ids_missing"],
+        }
+        if to_create:
+            preview["first_new_record"] = to_create[0]["fields"]
+        print(json.dumps(preview, indent=2))
+        return result
 
     batches_sent = 0
     api_errors = 0
 
-    # Updates (PATCH with explicit record IDs)
+    # Updates (PATCH with explicit record IDs) — full mode only
     for batch in chunked(to_update, 10):
         payload = {"records": batch, "typecast": True}
         resp = airtable_request(session, "PATCH", url, json_payload=payload)
@@ -518,10 +641,16 @@ def upsert_records(
         else:
             batches_sent += 1
 
-    eprint(f"Updated: {len(to_update)} records, Created: {len(to_create)} records.")
+    result["created"] = len(to_create)
+    result["updated"] = len(to_update)
+    result["batches_sent"] = batches_sent
+    result["api_errors"] = api_errors
+
+    eprint(f"Created: {len(to_create)}, Updated: {len(to_update)}, "
+           f"Skipped (already in Airtable): {result['skipped_existing']}.")
     if unmatched_instructors:
         eprint(f"Warning: no Airtable match for instructor(s): {sorted(unmatched_instructors)}")
-    return batches_sent, api_errors
+    return result
 
 
 def main() -> int:
@@ -531,8 +660,11 @@ def main() -> int:
     parser.add_argument("--table-id", default=TABLE_ID, help="Airtable table ID for Peloton; defaults to peloton-sync.conf")
     parser.add_argument("--instructor-table-id", default=INSTRUCTOR_TABLE_ID, help="Airtable table ID for the instructor lookup; defaults to peloton-sync.conf")
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var")
-    parser.add_argument("--dry-run", action="store_true", help="Parse and print the first record payload, but do not write to Airtable")
+    parser.add_argument("--dry-run", action="store_true", help="Report what would be created/updated (and print the first new record payload), but do not write to Airtable")
     parser.add_argument("--recent", type=int, default=None, metavar="N", help="Only process the N most recent workouts from the CSV")
+    parser.add_argument("--full", action="store_true", help="Also update every existing row from the CSV (legacy upsert). Default is incremental: only create rows not yet in Airtable")
+    parser.add_argument("--no-workout-ids", action="store_true", help="Skip the Peloton API lookup that fills Peloton_Workout_ID (offline runs, or when the extract repo is unavailable)")
+    parser.add_argument("--workout-ids-cmd", default=WORKOUT_IDS_CMD or None, help="Path to peloton-workout-ids.sh; defaults to PELOTON_WORKOUT_IDS_CMD or the sibling peloton-workout-extract checkout")
     args = parser.parse_args()
 
     if not args.token and not args.dry_run:
@@ -584,21 +716,30 @@ def main() -> int:
 
     stats.rows_prepared = len(airtable_field_records)
 
-    batches_sent, api_errors = upsert_records(
+    write_result = upsert_records(
         token=args.token or "",
         base_id=args.base_id,
         table_id=args.table_id,
         instructor_table_id=args.instructor_table_id,
         records=airtable_field_records,
         dry_run=args.dry_run,
+        full=args.full,
+        workout_ids=not args.no_workout_ids,
+        workout_ids_cmd=args.workout_ids_cmd,
     )
-    stats.batches_sent = batches_sent
-    stats.api_errors = api_errors
+    stats.batches_sent = write_result["batches_sent"]
+    stats.api_errors = write_result["api_errors"]
 
     summary = {
+        "mode": "full" if args.full else "incremental",
         "rows_read": stats.rows_read,
         "rows_skipped_missing_key": stats.rows_skipped_missing_key,
         "rows_prepared": stats.rows_prepared,
+        "created": write_result["created"],
+        "updated": write_result["updated"],
+        "skipped_existing": write_result["skipped_existing"],
+        "workout_ids_filled": write_result["workout_ids_filled"],
+        "workout_ids_missing": write_result["workout_ids_missing"],
         "batches_sent": stats.batches_sent,
         "api_errors": stats.api_errors,
         "table_id": args.table_id,

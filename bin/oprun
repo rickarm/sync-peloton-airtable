@@ -1,0 +1,58 @@
+#!/bin/bash
+# oprun: run one command with the pipeline's 1Password Environment injected.
+#
+#   bin/oprun <command> [args...]
+#   bin/oprun --whoami        # service-account name, type, state
+#
+# Reads the service-account token from the macOS login keychain and the
+# Environment id from ~/.env, then execs `op run --environment`. The token
+# lives only in this process and op's; it is never printed, never put on a
+# command line, and removed from the child command's environment. Run it,
+# never source it: nothing is exported to the calling shell.
+#
+# Machine-specific values have defaults for the owner's Mac and can be
+# overridden: OPRUN_KEYCHAIN_SERVICE, OPRUN_KEYCHAIN_ACCOUNT, OPRUN_ENV_KEY.
+
+if [ -n "${ZSH_EVAL_CONTEXT:-}" ] || { [ -n "${BASH_SOURCE:-}" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; }; then
+  echo "oprun: run this script, do not source it" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+set -euo pipefail
+
+export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:/opt/homebrew/bin:/usr/bin:/bin"
+export OP_CLI="$HOME/opt/op-beta/op"
+
+service="${OPRUN_KEYCHAIN_SERVICE:-op-service-account}"
+account="${OPRUN_KEYCHAIN_ACCOUNT:-agent-spin-diesel}"
+env_key="${OPRUN_ENV_KEY:-OP_ENVIRONMENT_ID_PELOTON_SYNC}"
+
+if [ $# -eq 0 ]; then
+  echo "usage: oprun <command> [args...]" >&2
+  exit 64
+fi
+if [ ! -x "$OP_CLI" ]; then
+  echo "oprun: 1Password beta CLI not found at $OP_CLI" >&2
+  exit 69
+fi
+
+if ! token="$(/usr/bin/security find-generic-password -s "$service" -a "$account" -w 2>/dev/null)" || [ -z "$token" ]; then
+  echo "oprun: no keychain item $service/$account (or the login keychain is locked)" >&2
+  exit 69
+fi
+
+env_id="$(grep -E "^${env_key}=" "$HOME/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'" || true)"
+if [ -z "$env_id" ]; then
+  echo "oprun: $env_key not found in ~/.env" >&2
+  exit 69
+fi
+
+export OP_ENVIRONMENT_ID="$env_id"
+
+# Identity check for the first-run checklist: prints name, type and state only.
+if [ "$1" = "--whoami" ]; then
+  OP_SERVICE_ACCOUNT_TOKEN="$token" "$OP_CLI" user get --me | grep -iE '^(name|type|state):'
+  exit "${PIPESTATUS[0]}"
+fi
+
+OP_SERVICE_ACCOUNT_TOKEN="$token" exec "$OP_CLI" run --environment "$env_id" -- /usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN "$@"

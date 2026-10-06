@@ -78,15 +78,20 @@ The owner context gives the exact paths for your machine. In general you need:
 - **`uv`** (Python project runner) on PATH. The Peloton extract wrappers use
   it; you don't call it directly.
 - **1Password CLI, beta build `2.33.0-beta.02` or later.** 1Password
-  Environments (`op run --environment`) aren't in the stable CLI. Point
-  `OP_CLI` at the beta binary.
-- **Two environment variables from your runtime:**
-  - `OP_SERVICE_ACCOUNT_TOKEN`: the token for your 1Password service account.
-  - `OP_ENVIRONMENT_ID`: the id of the 1Password Environment holding the
-    pipeline's secrets.
-  If either is missing, stop and ask the owner. Don't search the disk for them.
-- **A task-manager connection** (for example a Things MCP server), if the
-  owner context says to complete to-dos.
+  Environments (`op run --environment`) aren't in the stable CLI, and a plain
+  `op` on your PATH may well be the stable one. You don't call it yourself:
+  the wrapper below does.
+- **The wrapper `bin/oprun` in this repo.** It sets PATH and `OP_CLI`, reads
+  your service-account token from the machine's secure storage (where, is in
+  the owner context), reads the Environment id, and runs your command under
+  `op run --environment`. The token exists only inside the wrapper and `op`;
+  it is never printed, never exported to your shell, and removed from the
+  command it runs. You never handle `OP_SERVICE_ACCOUNT_TOKEN` or
+  `OP_ENVIRONMENT_ID` yourself. If the wrapper fails, stop and ask the owner.
+  Don't search the disk for the token, and never `source` the wrapper.
+- **A task-manager connection**, if the owner context says to complete
+  to-dos: an MCP server (for example a Things MCP server) or, on the local
+  machine only, AppleScript (`osascript`).
 
 ---
 
@@ -105,11 +110,14 @@ Environment holding `PELOTON_EMAIL`, `PELOTON_PASSWORD` and `AIRTABLE_TOKEN`.
 ```
 
 They exist only for the life of that command. In this document, **`OPRUN`**
-means exactly that prefix. Define it once per shell:
+means the wrapper `bin/oprun` in this repo, which runs exactly that command
+for you. Define it once per shell:
 
 ```bash
-OPRUN() { "$OP_CLI" run --environment "$OP_ENVIRONMENT_ID" -- "$@"; }
+OPRUN() { ~/Dev/sync-peloton-airtable/bin/oprun "$@"; }
 ```
+
+Use the absolute path (the procedures below `cd` around).
 
 **Rules:**
 
@@ -132,6 +140,11 @@ OPRUN() { "$OP_CLI" run --environment "$OP_ENVIRONMENT_ID" -- "$@"; }
    overridable with `PELOTON_CACHE_DIR`) holds a live Peloton login token that
    lasts about 48 hours. Never copy, print, or commit it. When it expires, the
    tools log in again on their own, headlessly, using the injected credentials.
+7. **Never dump your environment.** No unfiltered `env`, `printenv`,
+   `export -p`, `set` or `declare -p`, in your own shell or inside `OPRUN`.
+   Your shell may carry other people's secrets, and an `op run` child holds
+   the injected ones. To check one variable, test it without printing it:
+   `[ -n "${NAME:-}" ] && echo NAME:set || echo NAME:unset`.
 
 **What a missing secret looks like:**
 - `AIRTABLE_TOKEN not set. Run via: op run --environment ...`: you ran the
@@ -147,19 +160,19 @@ Run these in order the first time, and whenever something breaks. Report one
 line per step (pass, or the failure in plain words).
 
 ```bash
-# (set PATH and OP_CLI as the owner context says)
-OPRUN() { "$OP_CLI" run --environment "$OP_ENVIRONMENT_ID" -- "$@"; }
+OPRUN() { ~/Dev/sync-peloton-airtable/bin/oprun "$@"; }
 
-# 1. Runtime variables are present (prints only yes/no)
-[ -n "$OP_SERVICE_ACCOUNT_TOKEN" ] && echo token:yes || echo token:NO
-[ -n "$OP_ENVIRONMENT_ID" ] && echo envid:yes || echo envid:NO
+# 1. The wrapper works and the token stays inside it (prints only ok/clean)
+OPRUN true && echo wrapper:ok || echo wrapper:FAIL
+OPRUN bash -c '[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && echo child:clean || echo child:LEAK'
+[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] && echo shell:clean || echo shell:LEAK
 
-# 2. Beta CLI with Environments support
-"$OP_CLI" --version                                  # expect 2.33.0-beta.02 or later
-"$OP_CLI" run --help | grep -c -- '--environment'    # expect 1 or more
+# 2. Beta CLI with Environments support (the wrapper exports OP_CLI to the child)
+OPRUN bash -c '"$OP_CLI" --version'                                 # expect 2.33.0-beta.02 or later
+OPRUN bash -c '"$OP_CLI" run --help | grep -c -- "--environment"'   # expect 1 or more
 
 # 3. Identity: expect "Type: SERVICE_ACCOUNT"
-"$OP_CLI" user get --me | grep -iE '^(name|type|state):'
+~/Dev/sync-peloton-airtable/bin/oprun --whoami
 
 # 4. All three secrets arrive (prints names and lengths only, never values)
 OPRUN bash -c 'for v in PELOTON_EMAIL PELOTON_PASSWORD AIRTABLE_TOKEN; do x="${!v:-}"; [ -n "$x" ] && echo "$v: set (${#x} chars)" || echo "$v: MISSING"; done'
@@ -178,7 +191,8 @@ OPRUN ~/Dev/peloton-workout-extract/peloton-workout-ids.sh --limit 1 --format cs
 cd ~/Dev/sync-peloton-airtable && OPRUN ./peloton-match.sh --dry-run --recent 3
 #    expect a JSON summary with "api_errors": 0
 
-# 9. Task manager reachable (if used): list today's to-dos through your MCP client
+# 9. Task manager reachable (if used): list today's to-dos through your MCP
+#    client, or with AppleScript on the local machine
 ```
 
 Each `OPRUN` call takes a few seconds to start on Apple silicon (1Password
@@ -215,7 +229,10 @@ workout IDs, then runs the class matcher. A matcher failure doesn't undo the
 import. Running the sync twice is harmless; the second run creates nothing.
 
 **4. Task manager.** If a workout was recorded **today** and the owner context
-says to, find the matching open to-do scheduled for today and complete it.
+says to, find the matching open to-do scheduled for today and complete it,
+through the MCP server or, on the local machine, AppleScript. The owner
+context says how to match and what to do when the task manager can't be
+reached. A task-manager failure never blocks or undoes the sync.
 
 **Report** in one or two lines, result first, for example:
 > Synced. 1 new workout (`<date>`, `<class title>`, `<output>` kJ). Completed "`<task>`".
@@ -321,7 +338,8 @@ answer before:
 | What you see | What to do |
 |---|---|
 | `... not set. Run via: op run --environment ...` | You skipped `OPRUN`. Re-run wrapped |
-| `op`: unknown flag `--environment` | Wrong CLI. Point `OP_CLI` at the beta build |
+| `op`: unknown flag `--environment` | You ran `op` directly, or the wrapper's CLI path is wrong. Use `OPRUN`; if it persists, tell the owner |
+| `oprun: no keychain item ...` or `... not found in ~/.env` | The wrapper can't reach its token or Environment id (often a locked keychain after a reboot). Tell the owner; don't hunt for the token |
 | `op`: "An unexpected error occurred" | Usually your service account can't read that Environment, or the id is wrong. Run checklist steps 3 and 4 and report. Don't retry in a loop |
 | A secret shows MISSING in step 4 | The Environment lacks it. Tell the owner which name |
 | Airtable 401/403 | The token was revoked or rotated. Ask the owner to update `AIRTABLE_TOKEN` **in the 1Password Environment** |
@@ -336,6 +354,8 @@ answer before:
 ## 8. Never
 
 - Read secrets from files, put them on a command line, or print them
+- Dump your environment (`env`, `printenv`, `export -p`, `set`) unfiltered
+- Source `bin/oprun`, or handle the service-account token yourself
 - Run `op environment read`, `op signin`, or `op run --no-masking`
 - Write workout rows any way except `./peloton-sync.sh`
 - Run `--full` or a real dedup without the owner's go-ahead

@@ -2,6 +2,9 @@
 
 Tools for syncing Peloton workout data into an Airtable base.
 
+> **Running this as an agent?** Start with [AGENT-INSTRUCTIONS.md](AGENT-INSTRUCTIONS.md):
+> orientation, the secrets rules, a first-run checklist, and every procedure.
+
 > **Single writer policy.** Peloton workouts are written to Airtable through
 > **one** path only: the idempotent **Python CSV Import** (`./peloton-sync.sh`).
 > It merges on `Workout_timestamp`, so it can be re-run safely and never creates

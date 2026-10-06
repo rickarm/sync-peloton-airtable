@@ -659,7 +659,7 @@ def main() -> int:
     parser.add_argument("--base-id", default=BASE_ID, help="Airtable base ID; defaults to peloton-sync.conf")
     parser.add_argument("--table-id", default=TABLE_ID, help="Airtable table ID for Peloton; defaults to peloton-sync.conf")
     parser.add_argument("--instructor-table-id", default=INSTRUCTOR_TABLE_ID, help="Airtable table ID for the instructor lookup; defaults to peloton-sync.conf")
-    parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var")
+    parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"), help="Airtable personal access token; defaults to AIRTABLE_TOKEN env var. Avoid: a token on the command line is visible in ps")
     parser.add_argument("--dry-run", action="store_true", help="Report what would be created/updated (and print the first new record payload), but do not write to Airtable")
     parser.add_argument("--recent", type=int, default=None, metavar="N", help="Only process the N most recent workouts from the CSV")
     parser.add_argument("--full", action="store_true", help="Also update every existing row from the CSV (legacy upsert). Default is incremental: only create rows not yet in Airtable")

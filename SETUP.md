@@ -39,10 +39,12 @@ and field names. Two of them come pre-seeded in the template:
 1. Go to https://airtable.com/create/tokens
 2. Create a token with scopes **`data.records:read`** and
    **`data.records:write`**, granted access to your copy of the base
-3. Put it in `~/.env` (your home directory, **not** inside this repo):
+3. Store it as `AIRTABLE_TOKEN` in a 1Password Environment (or any secret
+   manager that injects environment variables). Do **not** write it to a
+   `.env` file; no script reads one. Run the scripts with it injected:
 
 ```bash
-AIRTABLE_TOKEN=pat_your_token_here
+op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh --dry-run
 ```
 
 ## 3. Clone the repo
@@ -113,8 +115,8 @@ class's per-zone time breakdown (`TimeInZone1_min` … `TimeInZone7_min`).
 
 The matcher can only link classes that exist in Peloton-Rides. In a fresh
 base that table starts empty, so nothing links until class rows are added
-(currently a manual/scraper step — automatic backfill from Peloton's API is
-planned). You can run the matcher on its own any time:
+(currently a manual step via `peloton-class-resolve.sh` in
+peloton-workout-extract). You can run the matcher on its own any time:
 
 ```bash
 ./peloton-match.sh --dry-run   # report only

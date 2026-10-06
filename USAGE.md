@@ -9,15 +9,18 @@ Quick-reference for all commands. See [README.md](README.md) for setup and full 
 The primary day-to-day command. Downloads CSV from Peloton, runs it into Airtable.
 
 **Step 1:** Download your workout CSV from Peloton
-> Members site → Profile → Workout History → Download CSV
-> Save to `~/Downloads/` — filename should match `<PELOTON_USERNAME>_workouts*.csv`
+> `peloton-workout-extract/peloton-csv-download.sh` saves it to the CSV directory,
+> `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`), shared by both repos.
+> Not `~/Downloads`/`~/Desktop`/`~/Documents` (macOS protects them per app) or a git repo.
+> A CSV downloaded by hand: pass its path, or move it into the CSV directory.
+> Filename should match `<PELOTON_USERNAME>_workouts*.csv`
 > (username, base ID, and table IDs are configured in `peloton-sync.conf`;
 > per-user override: `~/.peloton-sync.conf`)
 
 **Step 2:** Run the sync
 
 ```bash
-# Daily sync (incremental, the default) — auto-detect newest CSV in ~/Downloads/
+# Daily sync (incremental, the default) — auto-detect newest CSV in $PELOTON_CSV_DIR
 ./peloton-sync.sh
 
 # Specify a CSV path explicitly
@@ -269,8 +272,11 @@ file. Do not pass `--token` on the command line: it shows up in `ps`.
 **`AIRTABLE_TOKEN not set`**
 → Run the script under `op run --environment "$OP_ENVIRONMENT_ID" --` (or export `AIRTABLE_TOKEN` in the calling process)
 
-**`No Peloton CSV found in ~/Downloads/`**
-→ Download the CSV from Peloton first, or pass the path explicitly: `./peloton-sync.sh "/path/to/file.csv"`
+**`No Peloton CSV found in <dir>`**
+→ Download the CSV first (`peloton-csv-download.sh`), or pass the path explicitly: `./peloton-sync.sh "/path/to/file.csv"`
+
+**`PELOTON_CSV_DIR=... is inside ~/Downloads` (or Desktop, Documents, a git repo)**
+→ Point `PELOTON_CSV_DIR` somewhere else, or unset it to use the default `~/.local/share/peloton-sync/csv`
 
 **Old workout rows in Airtable look wrong or are missing fields**
 → The default sync never touches existing rows. Re-sync history from the CSV

@@ -33,7 +33,7 @@ Nothing else. If asked to do something outside this list, say it's out of scope.
 ### How the pieces fit
 
 ```
-Peloton account ──(CSV export, browser)──► ~/Downloads/<PELOTON_USERNAME>_workouts*.csv
+Peloton account ──(CSV export, browser)──► $PELOTON_CSV_DIR/<PELOTON_USERNAME>_workouts*.csv
        │                                              │
        │ (Peloton API: workout IDs, class plans)       ▼
        └──────────────────────────────► ./peloton-sync.sh ──► Airtable "Peloton" table
@@ -210,7 +210,14 @@ Do all four steps without asking between them.
 ```bash
 OPRUN ~/Dev/peloton-workout-extract/peloton-csv-download.sh
 ```
-It saves `~/Downloads/<PELOTON_USERNAME>_workouts*.csv`.
+It saves `<PELOTON_USERNAME>_workouts*.csv` to the CSV directory: the
+environment variable `PELOTON_CSV_DIR`, default `~/.local/share/peloton-sync/csv`.
+The sync reads the newest CSV from the same directory. Leave it at the default
+unless the owner context says otherwise. Never point it at `~/Downloads`,
+`~/Desktop` or `~/Documents`: macOS protects those per app, and a process
+without permission hangs there with no error (the tools refuse them). If no
+CSV lands within the timeout (default 120 seconds), the download exits 3 with
+a message; report it, don't retry in a loop.
 
 **2. Dry run.**
 ```bash
@@ -347,6 +354,8 @@ answer before:
 | `ModuleNotFoundError` (`requests`, `certifi`) | The `python3` first on your PATH is the wrong one. Fix the PATH |
 | 1Password rate-limit error | Wait for the hourly window to reset. Check for a loop calling `OPRUN` per item |
 | `would_create` unexpectedly large | Stop before syncing; report the number |
+| Download exits 3: `no Peloton CSV landed in ... within Ns` | The download or file write stalled. Report it to the owner; don't loop. Don't move `PELOTON_CSV_DIR` into Downloads/Desktop/Documents |
+| `PELOTON_CSV_DIR=... is inside ...` | The directory is refused (protected folder or git repo). Unset it to use the default, or ask the owner |
 | Duplicate rows | Dedup dry-run, show the owner, wait for approval |
 
 ---

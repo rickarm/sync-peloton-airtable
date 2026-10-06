@@ -14,7 +14,7 @@ Tools for syncing Peloton workout data into an Airtable base.
 Workflows:
 
 1. **Python CSV Import** — Download a Peloton workout CSV and run `./peloton-sync.sh`
-   (auto-detects the newest CSV in `~/Downloads`). **Incremental by default** —
+   (auto-detects the newest CSV in `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`)). **Incremental by default** —
    only creates workouts not yet in Airtable; `--full` re-syncs history. Requires
    `AIRTABLE_TOKEN` in the environment. **This is the only write path.**
 2. **Workout ↔ Class Matching** — `./peloton-match.sh`, run automatically after each import.
@@ -156,9 +156,16 @@ rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
 
 ### How it works
 
-1. Download your Peloton workout history CSV from [members.onepeloton.com](https://members.onepeloton.com) → Profile → Workout History → Download.
+1. Download your Peloton workout history CSV with
+   `peloton-workout-extract/peloton-csv-download.sh`, which saves it to the CSV
+   directory: `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`). Both repos read that one
+   environment variable. It may not be inside `~/Downloads`, `~/Desktop`,
+   `~/Documents` (macOS protects those per app, and a process without
+   permission hangs there instead of failing) or any git repo; it is created
+   with mode 700 if missing. A CSV downloaded by hand in a browser lands in
+   `~/Downloads`; pass its path explicitly or move it into the CSV directory.
 2. The CSV filename will match `Big__Cheese_workouts*.csv` (your Peloton username).
-3. Run the sync script — it auto-detects the most recent matching CSV in `~/Downloads/`:
+3. Run the sync script — it auto-detects the most recent matching CSV in the CSV directory:
 
 ```bash
 op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh

@@ -53,11 +53,44 @@ if [ ! -f "$PYTHON_SCRIPT" ]; then
   exit 1
 fi
 
-# Auto-detect CSV if not provided
+# CSV directory: PELOTON_CSV_DIR (environment), else ~/.local/share/peloton-sync/csv.
+# Same rules as csv_dir.py in peloton-workout-extract, which downloads into it:
+# never inside ~/Downloads, ~/Desktop or ~/Documents (macOS protects them per
+# app, and an unpermitted process hangs there instead of failing), never inside
+# a git repo. Created with mode 700 if missing.
+refuse_protected_csv_dir() {
+  local dir="$1" name
+  for name in Downloads Desktop Documents; do
+    case "$dir/" in
+      "$HOME/$name/"*)
+        echo "Error: PELOTON_CSV_DIR=$dir is inside ~/$name, which macOS protects per app. Pick another directory." >&2
+        exit 1 ;;
+    esac
+  done
+}
+
+resolve_csv_dir() {
+  local dir="${PELOTON_CSV_DIR:-$HOME/.local/share/peloton-sync/csv}"
+  dir="${dir/#\~/$HOME}"
+  case "$dir" in /*) ;; *) dir="$PWD/$dir" ;; esac
+  dir="${dir%/}"
+  refuse_protected_csv_dir "$dir"     # lexically first: don't touch protected folders
+  [ -d "$dir" ] || mkdir -p -m 700 "$dir"
+  dir="$(cd "$dir" && pwd -P)"
+  refuse_protected_csv_dir "$dir"     # again after following symlinks
+  if [ "$(git -C "$dir" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
+    echo "Error: PELOTON_CSV_DIR=$dir is inside a git repository. Pick a directory outside any repo." >&2
+    exit 1
+  fi
+  printf '%s\n' "$dir"
+}
+
+# Auto-detect CSV if not provided: the newest export in the CSV directory
 if [ -z "$CSV_PATH" ]; then
-  CSV_PATH=$(ls -t "$HOME/Downloads/${PELOTON_USERNAME}_workouts"*.csv 2>/dev/null | head -1 || true)
+  CSV_DIR="$(resolve_csv_dir)"
+  CSV_PATH=$(ls -t "$CSV_DIR/${PELOTON_USERNAME}_workouts"*.csv 2>/dev/null | head -1 || true)
   if [ -z "$CSV_PATH" ]; then
-    echo "Error: No Peloton CSV found in ~/Downloads/ (looking for ${PELOTON_USERNAME}_workouts*.csv)"
+    echo "Error: No Peloton CSV found in $CSV_DIR (looking for ${PELOTON_USERNAME}_workouts*.csv). Download one first: peloton-csv-download.sh"
     exit 1
   fi
   echo "Auto-detected: $CSV_PATH"

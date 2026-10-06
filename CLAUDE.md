@@ -34,7 +34,7 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 - Superseded by Workflow 2.
 
 ### Workflow 2: Python CSV Import (the single write path)
-- Run: `./peloton-sync.sh [csv_path]` or auto-detect from Downloads
+- Run: `./peloton-sync.sh [csv_path]` or auto-detect the newest CSV in `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`, shared with peloton-workout-extract; never `~/Downloads`, which macOS protects per app, so an agent without permission hangs there)
 - Dry-run: `./peloton-sync.sh --dry-run` (reports would-create/update/skip counts)
 - Full upsert: `./peloton-sync.sh --full` (see below; not needed day-to-day)
 - Requires: `AIRTABLE_TOKEN` in the environment (`op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh`)
@@ -65,8 +65,8 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 - **Idempotent either way:** de-dupes within the CSV and merges on
   `Workout_timestamp`, so re-running against the same CSV produces 0 new rows.
 
-**How Mandy/agents import a CSV:** after a `Big__Cheese_workouts*.csv` lands in
-`~/Downloads`, run `./peloton-sync.sh --dry-run` first, sanity-check the
+**How Mandy/agents import a CSV:** after `peloton-csv-download.sh` saves a fresh
+`Big__Cheese_workouts*.csv` to `PELOTON_CSV_DIR`, run `./peloton-sync.sh --dry-run` first, sanity-check the
 `would_create` / `would_skip_existing` counts, then run `./peloton-sync.sh` to
 commit. Only add `--full` if Rick explicitly asks for a full re-sync. **Never** write
 Peloton workout rows via the Airtable MCP (`create_records_for_table`) directly —

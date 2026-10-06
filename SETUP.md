@@ -77,9 +77,10 @@ Set every value for **your** account and base:
 
 ## 5. Run your first sync
 
-1. Download your workout CSV: [members.onepeloton.com](https://members.onepeloton.com)
-   → Profile → Workout History → **Download Workouts** → it lands in
-   `~/Downloads/<username>_workouts*.csv`
+1. Download your workout CSV with `peloton-workout-extract/peloton-csv-download.sh`.
+   It lands in the CSV directory, `PELOTON_CSV_DIR` (default `~/.local/share/peloton-sync/csv`),
+   as `<username>_workouts*.csv`. (Downloaded by hand in a browser, it lands in
+   `~/Downloads`: pass that path to `peloton-sync.sh` or move the file.)
 2. Preview without writing anything:
 
 ```bash

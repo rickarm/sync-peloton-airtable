@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Load credentials from ~/.env if present
-[ -f "$HOME/.env" ] && source "$HOME/.env"
+# Credentials come from the process environment only (AIRTABLE_TOKEN), injected
+# by the caller, e.g.: op run --environment "$OP_ENVIRONMENT_ID" -- <this script>
+# No local secrets file is read, and the token is never put on a command line.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/Peloton_Airtable_Import.py"
@@ -70,14 +71,8 @@ fi
 
 # Validate token (skip for dry-run)
 if [ -z "${AIRTABLE_TOKEN:-}" ] && [ -z "$DRY_RUN" ]; then
-  echo "Error: AIRTABLE_TOKEN not set. Add it to ~/.env as: AIRTABLE_TOKEN=pat_xxx"
+  echo "Error: AIRTABLE_TOKEN not set. Run via: op run --environment \"\$OP_ENVIRONMENT_ID\" -- $0" >&2
   exit 1
-fi
-
-# Build token arg (only if token is set)
-TOKEN_ARG=""
-if [ -n "${AIRTABLE_TOKEN:-}" ]; then
-  TOKEN_ARG="--token $AIRTABLE_TOKEN"
 fi
 
 # Run import (capture status without aborting on failure)
@@ -87,7 +82,6 @@ python3 "$PYTHON_SCRIPT" \
   --table-id "$TABLE_ID" \
   --csv "$CSV_PATH" \
   ${DRY_RUN:-} \
-  ${TOKEN_ARG:-} \
   ${RECENT_ARG:-} \
   ${FULL:-}
 IMPORT_STATUS=$?

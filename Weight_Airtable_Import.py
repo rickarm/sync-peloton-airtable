@@ -278,7 +278,7 @@ def main() -> int:
     parser.add_argument("--base-id", default=BASE_ID)
     parser.add_argument("--table-id", default=TABLE_ID)
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"),
-                        help="Airtable PAT; defaults to AIRTABLE_TOKEN env var")
+                        help="Airtable PAT; defaults to AIRTABLE_TOKEN env var. Avoid: a token on the command line is visible in ps")
     parser.add_argument("--dry-run", action="store_true",
                         help="Parse and preview first record without writing to Airtable")
     args = parser.parse_args()

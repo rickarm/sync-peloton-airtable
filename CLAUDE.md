@@ -26,8 +26,7 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 - **Disabled as of 2026-06.** Do not re-enable without first removing Workflow 2;
   two concurrent writers is what caused duplicate workouts.
 - Watcher: launchd monitored `~/Downloads` for `Big__Cheese_workouts*.csv`
-- Script: `peloton-claude-sync.sh` (kept for reference only)
-- Plist: `launchd/com.rickarmbrust.peloton-sync.plist` (kept for reference only)
+- Script and plist removed from the repo 2026-10 (in git history)
 - To unload on Rick's machine:
   `launchctl bootout gui/$(id -u)/com.rickarmbrust.peloton-sync` (or, on older
   macOS, `launchctl unload ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist`),
@@ -38,7 +37,7 @@ See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Su
 - Run: `./peloton-sync.sh [csv_path]` or auto-detect from Downloads
 - Dry-run: `./peloton-sync.sh --dry-run` (reports would-create/update/skip counts)
 - Full upsert: `./peloton-sync.sh --full` (see below; not needed day-to-day)
-- Requires: `AIRTABLE_TOKEN` in `~/.env`
+- Requires: `AIRTABLE_TOKEN` in the environment (`op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh`)
 - **Fills `Peloton_Workout_ID`** so an Airtable row can be linked back to
   `members.onepeloton.com/profile/workouts/<id>`. The CSV export has no ID
   column, so the importer shells out to the sibling repo's
@@ -84,7 +83,7 @@ agents (e.g. Mandy) without the Airtable UI.
 - Dry-run (compute + report, no writes): `./peloton-match.sh --dry-run`
 - Faster (skip locked): `./peloton-match.sh --unlinked-only`
 - Limit scope: `./peloton-match.sh --recent N`
-- Requires: `AIRTABLE_TOKEN` in `~/.env` — **needed even for `--dry-run`** (the
+- Requires: `AIRTABLE_TOKEN` in the environment — **needed even for `--dry-run`** (the
   matcher reads live data to score).
 - Behavior: always computes `MatchScore` (but skips the write when the stored
   score already matches and nothing else changes, so re-runs don't rewrite every
@@ -115,10 +114,9 @@ a CSV import, run `./peloton-match.sh --dry-run` first, sanity-check the JSON
 summary (especially `linked_by_class_id`, `auto_matched` and `ambiguous`), then run `./peloton-match.sh`
 to commit. Report the JSON summary back.
 
-### Workflow 3: Class Scraper
-- Login: `python scraper/peloton_login_save_session.py` (one-time)
-- Scrape: `python scraper/peloton_class_scrape_stateful.py --class-id <ID>`
-- Requires: Playwright, saved session in `scraper/peloton_state.json`
+### Class metadata
+- The old `scraper/` was removed 2026-10. Use `peloton-class-resolve.sh` in
+  `~/Dev/peloton-workout-extract` instead.
 
 ## Weight Sync (Withings via HealthAutoExport)
 
@@ -132,7 +130,7 @@ Imports weight and body fat readings from the Health Auto Export iOS app into Ai
 - Merge key: `Date` — one record per day, latest reading wins on duplicates
 - Body fat stored as decimal (0.1679), not percentage (16.79) — script divides by 100
 - `Lean Body Mass` is a computed field — do NOT write to it
-- Requires `AIRTABLE_TOKEN` in `~/.env`
+- Requires `AIRTABLE_TOKEN` in the environment
 
 ```bash
 ~/scripts/weight-sync.sh             # sync new files only (since last run)
@@ -149,7 +147,6 @@ python Weight_Airtable_Import.py --input /path/to/HealthAutoExport-2026.json
 ## Architecture
 
 ```
-peloton-claude-sync.sh                  # Workflow 1: MCP-based sync
 peloton-sync.sh                         # Workflow 2: wrapper script (runs matcher after import)
 Peloton_Airtable_Import.py              # Workflow 2: direct Airtable API import
 peloton-match.sh                        # Workflow 2b: matcher wrapper (agent-runnable)
@@ -157,16 +154,17 @@ Peloton_Match.py                        # Workflow 2b: links workouts → Peloto
 workout_id_lookup.py                    # Workflow 2: resolves Peloton_Workout_ID via the extract repo
 Peloton_Dedup.py                        # Dedup utility
 Weight_Airtable_Import.py              # Weight/body-fat sync (Withings)
-scraper/
-  peloton_class_scrape_stateful.py      # Workflow 3: class scraper
-  peloton_login_save_session.py         # Workflow 3: session setup
 ```
 
 ## Environment
 
-Credentials in `~/.env` (home dir, NOT repo):
-- `AIRTABLE_TOKEN` — for Workflow 2 and Weight sync
-- `PELOTON_EMAIL` / `PELOTON_PASSWORD` — for Workflow 3 (scraper)
+Secrets come from the **process environment only**, injected by the caller:
+`op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh`. No script
+reads or sources a `.env` file, and the wrappers never pass `--token` (it would
+show in `ps`). Don't add either back.
+- `AIRTABLE_TOKEN` — Workflow 2, matcher, dedup, weight sync
+- `PELOTON_EMAIL` / `PELOTON_PASSWORD` — consumed by `peloton-workout-ids.sh`
+  in the extract repo, which the importer calls (inherits this environment)
 
 Sync config (Peloton username, base ID, table IDs) in **`peloton-sync.conf`**
 (repo root, checked in). Per-user override: `~/.peloton-sync.conf` (loaded

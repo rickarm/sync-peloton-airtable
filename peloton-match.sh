@@ -11,8 +11,9 @@ set -euo pipefail
 #
 # Any flags are passed straight through to Peloton_Match.py.
 
-# Load credentials from ~/.env if present
-[ -f "$HOME/.env" ] && source "$HOME/.env"
+# Credentials come from the process environment only (AIRTABLE_TOKEN), injected
+# by the caller, e.g.: op run --environment "$OP_ENVIRONMENT_ID" -- <this script>
+# No local secrets file is read, and the token is never put on a command line.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_SCRIPT="$SCRIPT_DIR/Peloton_Match.py"
@@ -47,13 +48,12 @@ fi
 
 # Token is required even for --dry-run (matcher reads live data to score).
 if [ -z "${AIRTABLE_TOKEN:-}" ]; then
-  echo "Error: AIRTABLE_TOKEN not set. Add it to ~/.env as: AIRTABLE_TOKEN=pat_xxx"
+  echo "Error: AIRTABLE_TOKEN not set. Run via: op run --environment \"\$OP_ENVIRONMENT_ID\" -- $0" >&2
   exit 1
 fi
 
 # Config-derived flags come first so anything in "$@" can still override them.
 exec python3 "$PYTHON_SCRIPT" \
-  --token "$AIRTABLE_TOKEN" \
   --base-id "$AIRTABLE_BASE_ID" \
   --peloton-table-id "$PELOTON_TABLE_ID" \
   --rides-table-id "$PELOTON_RIDES_TABLE_ID" \

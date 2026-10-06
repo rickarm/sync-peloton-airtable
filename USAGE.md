@@ -30,7 +30,7 @@ The primary day-to-day command. Downloads CSV from Peloton, runs it into Airtabl
 ./peloton-sync.sh --full
 ```
 
-**Requires:** `AIRTABLE_TOKEN` set in `~/.env`
+**Requires:** `AIRTABLE_TOKEN` in the environment (run under `op run --environment "$OP_ENVIRONMENT_ID" --`)
 
 ### Default (incremental) vs `--full` — know which one you want
 
@@ -71,13 +71,6 @@ python3 Peloton_Airtable_Import.py \
   --csv "/path/to/workouts.csv" \
   --base-id appBmQA2p3z2Fdofa \
   --table-id tblBuzhfztfwgE59f
-
-# With token passed explicitly (instead of from env)
-python3 Peloton_Airtable_Import.py \
-  --csv "/path/to/workouts.csv" \
-  --base-id appBmQA2p3z2Fdofa \
-  --table-id tblBuzhfztfwgE59f \
-  --token pat_xxx
 
 # Dry run
 python3 Peloton_Airtable_Import.py \
@@ -168,7 +161,7 @@ records.
 ./peloton-match.sh --recent 10
 ```
 
-**Requires:** `AIRTABLE_TOKEN` set in `~/.env` — required even for `--dry-run`,
+**Requires:** `AIRTABLE_TOKEN` in the environment (run under `op run --environment "$OP_ENVIRONMENT_ID" --`) — required even for `--dry-run`,
 because scores are read from live Airtable data.
 
 Runs automatically after a `peloton-sync.sh` import — with `--unlinked-only` on
@@ -228,12 +221,11 @@ python3 Peloton_Match.py --dry-run
 # Default IDs (Health-Tracking base)
 python3 Peloton_Match.py
 
-# Override IDs / token explicitly
+# Override IDs explicitly
 python3 Peloton_Match.py \
   --base-id appBmQA2p3z2Fdofa \
   --peloton-table-id tblBuzhfztfwgE59f \
-  --rides-table-id tblht11eg2nJ5gh3o \
-  --token pat_xxx
+  --rides-table-id tblht11eg2nJ5gh3o
 ```
 
 ---
@@ -253,92 +245,29 @@ python3 Peloton_Dedup.py \
 python3 Peloton_Dedup.py \
   --base-id appBmQA2p3z2Fdofa \
   --table-id tblBuzhfztfwgE59f
-
-# With token passed explicitly
-python3 Peloton_Dedup.py \
-  --base-id appBmQA2p3z2Fdofa \
-  --table-id tblBuzhfztfwgE59f \
-  --token pat_xxx
 ```
 
-**Requires:** `AIRTABLE_TOKEN` set in `~/.env` (or passed via `--token`)
-
----
-
-## Scraper — peloton_login_save_session.py
-
-Run **once per machine** (or when the session expires) to authenticate and save a browser session.
-
-```bash
-cd scraper
-python peloton_login_save_session.py
-```
-
-A Chrome window will open. Log into Peloton manually if the auto-fill doesn't complete, then press **Enter** in the terminal.
-
-Saves `scraper/peloton_state.json` (gitignored).
-
-**Requires:** `PELOTON_EMAIL` and `PELOTON_PASSWORD` in `~/.env`
-
-```bash
-# Save to a custom path
-python peloton_login_save_session.py --state-file /path/to/state.json
-```
-
-**Session expires** after days to weeks. Signs: scraper redirects to login or returns empty data. Re-run this script to refresh.
-
----
-
-## Scraper — peloton_class_scrape_stateful.py
-
-Scrapes class metadata from a Peloton class page. Uses saved session from above.
-
-```bash
-cd scraper
-
-# By full class URL
-python peloton_class_scrape_stateful.py \
-  --url 'https://members.onepeloton.com/classes/cycling?modal=classDetailsModal&classId=CLASS_ID_HERE'
-
-# By class ID only
-python peloton_class_scrape_stateful.py --class-id CLASS_ID_HERE
-
-# URL as positional argument (no flag needed)
-python peloton_class_scrape_stateful.py 'https://members.onepeloton.com/classes/...'
-```
-
-**Output:** JSON to stdout. Pipe to a file to save:
-
-```bash
-python peloton_class_scrape_stateful.py --class-id abc123 > class_abc123.json
-```
-
-**Sample output fields:**
-```
-class_id, class_detail_url, ride_title, instructor, discipline,
-duration_minutes, class_timestamp, description, segments, zone_allocations
-```
-
-**Requires:** `scraper/peloton_state.json` (run `peloton_login_save_session.py` first)
+**Requires:** `AIRTABLE_TOKEN` in the environment (run under `op run --environment "$OP_ENVIRONMENT_ID" --`)
 
 ---
 
 ## Environment Variables Reference
 
-All set in `~/.env` (home directory, not project folder).
+Read from the process environment only, injected by the caller
+(`op run --environment "$OP_ENVIRONMENT_ID" -- ...`). No script reads a `.env`
+file. Do not pass `--token` on the command line: it shows up in `ps`.
 
 | Variable | Used by | Description |
 |---|---|---|
-| `AIRTABLE_TOKEN` | `peloton-sync.sh`, `Peloton_Airtable_Import.py`, `peloton-match.sh`, `Peloton_Match.py`, `Peloton_Dedup.py` | Airtable personal access token |
-| `PELOTON_EMAIL` | `scraper/peloton_login_save_session.py` | Peloton account email |
-| `PELOTON_PASSWORD` | `scraper/peloton_login_save_session.py` | Peloton account password |
+| `AIRTABLE_TOKEN` | `peloton-sync.sh`, `Peloton_Airtable_Import.py`, `peloton-match.sh`, `Peloton_Match.py`, `Peloton_Dedup.py`, `Weight_Airtable_Import.py` | Airtable personal access token |
+| `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `peloton-workout-ids.sh` (peloton-workout-extract), called by the importer | Peloton login, only when that tool's cached session has expired |
 
 ---
 
 ## Common Issues
 
 **`AIRTABLE_TOKEN not set`**
-→ Add `AIRTABLE_TOKEN=pat_xxx` to `~/.env`
+→ Run the script under `op run --environment "$OP_ENVIRONMENT_ID" --` (or export `AIRTABLE_TOKEN` in the calling process)
 
 **`No Peloton CSV found in ~/Downloads/`**
 → Download the CSV from Peloton first, or pass the path explicitly: `./peloton-sync.sh "/path/to/file.csv"`
@@ -350,12 +279,6 @@ with `./peloton-sync.sh --full` (also triggers a full matcher re-score).
 **Daily sync summary shows a big `skipped_existing` count**
 → Expected. That's the incremental default skipping workouts already in
 Airtable; only `created` rows are new writes.
-
-**Scraper redirects to login or returns empty data**
-→ Session expired. Re-run `python scraper/peloton_login_save_session.py`
-
-**`playwright: command not found` or import error**
-→ Install dependencies: `pip install -r requirements.txt && playwright install chromium`
 
 **Instructor names not matching in Airtable**
 → Check the import summary for `Warning: no Airtable match for instructor(s): [...]`

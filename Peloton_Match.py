@@ -733,7 +733,7 @@ def main() -> int:
     parser.add_argument("--rides-table-id", default=RIDES_TABLE_ID)
     parser.add_argument("--type-table-id", default=TYPE_TABLE_ID)
     parser.add_argument("--token", default=os.getenv("AIRTABLE_TOKEN"),
-                        help="Airtable PAT; defaults to AIRTABLE_TOKEN env var")
+                        help="Airtable PAT; defaults to AIRTABLE_TOKEN env var. Avoid: a token on the command line is visible in ps")
     parser.add_argument("--dry-run", action="store_true",
                         help="Compute and report matches without writing")
     parser.add_argument("--unlinked-only", action="store_true",

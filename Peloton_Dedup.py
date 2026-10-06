@@ -6,7 +6,7 @@ Fetches all records, groups by Workout_timestamp, keeps the most recently
 created record for each timestamp, and deletes the rest.
 
 Usage:
-  python3 Peloton_Dedup.py --base-id appBmQA2p3z2Fdofa --table-id tblBuzhfztfwgE59f --token pat_xxx
+  python3 Peloton_Dedup.py --base-id appBmQA2p3z2Fdofa --table-id tblBuzhfztfwgE59f   # AIRTABLE_TOKEN from env
   python3 Peloton_Dedup.py --base-id appBmQA2p3z2Fdofa --table-id tblBuzhfztfwgE59f --dry-run
 """
 

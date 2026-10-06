@@ -5,30 +5,49 @@ Tools for syncing Peloton workout data into an Airtable base.
 > **Single writer policy.** Peloton workouts are written to Airtable through
 > **one** path only: the idempotent **Python CSV Import** (`./peloton-sync.sh`).
 > It merges on `Workout_timestamp`, so it can be re-run safely and never creates
-> duplicates. The old automated folder watcher is **retired** (see Workflow 1) —
-> it was a second writer, and two writers caused duplicate workout rows.
+> duplicates. The old automated folder watcher is **retired** and its files have
+> been removed — it was a second writer, and two writers caused duplicate rows.
 
 Workflows:
 
-1. **Automated Claude MCP Sync** — *(retired)* a launchd watcher that
-   auto-synced CSVs dropped in `~/Downloads`. Disabled to enforce a single writer.
-2. **Python CSV Import** — Download a Peloton workout CSV and run `./peloton-sync.sh`
+1. **Python CSV Import** — Download a Peloton workout CSV and run `./peloton-sync.sh`
    (auto-detects the newest CSV in `~/Downloads`). **Incremental by default** —
    only creates workouts not yet in Airtable; `--full` re-syncs history. Requires
-   an Airtable personal access token in `~/.env`. **This is the only write path.**
-3. **Class Scraper** — Scrape class metadata (segments, zone allocations, description) from the Peloton website using a saved browser session.
+   `AIRTABLE_TOKEN` in the environment. **This is the only write path.**
+2. **Workout ↔ Class Matching** — `./peloton-match.sh`, run automatically after each import.
+
+Class metadata (zone plans, instructors) now comes from `peloton-class-resolve.sh`
+in [peloton-workout-extract](https://github.com/rickarm/peloton-workout-extract);
+the old Playwright class scraper that lived in `scraper/` has been removed.
 
 ---
 
-## Credentials and API Keys
+## Credentials
 
-| Workflow | What's needed | Where it lives |
+Every script reads secrets from the **process environment only**. No script
+reads or sources a local secrets file, and the wrappers never put a token on a
+command line. The caller injects the variables, normally from a 1Password
+Environment:
+
+```bash
+op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh
+```
+
+| Variable | Needed by | Notes |
 |---|---|---|
-| Python CSV Import | `AIRTABLE_TOKEN` (Airtable personal access token) | `~/.env` (never committed) |
-| Class Scraper | `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `~/.env` (never committed) |
-| Workout ID lookup (optional) | a working `peloton-workout-extract` checkout; its own 1Password token | path via `PELOTON_WORKOUT_IDS_CMD` in `peloton-sync.conf` |
+| `AIRTABLE_TOKEN` | `peloton-sync.sh` (real runs), `peloton-match.sh` (always, even `--dry-run`), `Peloton_Airtable_Import.py`, `Peloton_Match.py`, `Peloton_Dedup.py`, `Weight_Airtable_Import.py` | Airtable personal access token, scopes `data.records:read` + `data.records:write` |
+| `PELOTON_EMAIL`, `PELOTON_PASSWORD` | `peloton-workout-ids.sh` in the sibling `peloton-workout-extract` repo, which the importer calls to fill `Peloton_Workout_ID` | Only used when that tool has to log in; it inherits this process's environment |
 
-Nothing sensitive is hardcoded in any script.
+`op run --environment` needs a 1Password CLI build with Environments support
+(2.33.0-beta.02 or later; stable 2.35.0 does not have it). The caller also
+provides `OP_SERVICE_ACCOUNT_TOKEN`; it never comes from a file.
+
+**Do not use `--token`.** The Python scripts still accept it as an override,
+but a token on the command line is visible to every local user via `ps`. Let
+the scripts read `AIRTABLE_TOKEN` from the environment.
+
+Nothing sensitive is hardcoded in any script. `peloton-sync.conf` holds only
+non-secret IDs; keep it that way.
 
 ---
 
@@ -36,27 +55,15 @@ Nothing sensitive is hardcoded in any script.
 
 ```
 sync-peloton-airtable/
-├── peloton-claude-sync.sh           # (RETIRED) old launchd watcher entry point — reference only
 ├── peloton-sync.sh                  # Python-based CSV import entry point (runs the matcher after import)
 ├── workout_id_lookup.py             # Resolves Peloton_Workout_ID (shells out to peloton-workout-extract)
 ├── peloton-match.sh                 # Workout ↔ class matcher entry point (agent-runnable)
 ├── Peloton_Airtable_Import.py       # Reads CSV, imports new workouts into Airtable (incremental; --full upserts)
 ├── Peloton_Match.py                 # Links Peloton workouts to Peloton-Rides class metadata
 ├── Peloton_Dedup.py                 # Removes duplicate records from Airtable
-├── requirements.txt                 # Python dependencies
-├── .env.example                     # Template showing required env vars
-├── launchd/
-│   └── com.rickarmbrust.peloton-sync.plist  # (RETIRED) LaunchAgent for the old watcher — reference only
-└── scraper/
-    ├── peloton_login_save_session.py      # Run once to authenticate and save session
-    ├── peloton_class_scrape_stateful.py   # Scrapes class metadata using saved session
-    ├── Peloton Scraper README.md          # Scraper-specific notes
-    └── archive/                           # Older scraper iterations (reference only)
-        ├── peloton_class_scrape.py
-        ├── peloton_class_scrape_v2.py
-        ├── peloton_class_scrape_v3.py
-        ├── peloton_class_scrape_env_home.py
-        └── peloton_class_scrape_stateful_working.py
+├── Weight_Airtable_Import.py        # Weight/body-fat sync (Withings via Health Auto Export)
+├── peloton-sync.conf                # Non-secret IDs (username, base, tables)
+└── requirements.txt                 # Python dependencies
 ```
 
 ---
@@ -111,50 +118,26 @@ cd sync-peloton-airtable
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium   # only needed for the scraper
 ```
 
-### 3. Set credentials in `~/.env`
+### 3. Provide credentials
 
-The shell script and Python scripts load credentials from `~/.env` (your home directory, not the project folder). Add the following:
-
-```bash
-# Airtable — required for CSV import and dedup
-AIRTABLE_TOKEN=pat_your_airtable_personal_access_token
-
-# Peloton — required only for the class scraper
-PELOTON_EMAIL=your@email.com
-PELOTON_PASSWORD=your-peloton-password
-```
+See [Credentials](#credentials). Put `AIRTABLE_TOKEN` (and the Peloton
+credentials) in a 1Password Environment and run the scripts under
+`op run --environment "$OP_ENVIRONMENT_ID" --`. Do not create a `.env` file.
 
 To get an Airtable token: https://airtable.com/create/tokens
 Scope needed: `data.records:read`, `data.records:write` on the target base.
 
-### 4. Save a Peloton browser session (scraper only)
-
-The scraper authenticates via a saved Playwright browser session rather than API credentials. Run this once per machine (or when the session expires):
-
-```bash
-cd scraper
-python peloton_login_save_session.py
-```
-
-A browser window will open. Log into Peloton, then press Enter in the terminal. This saves `scraper/peloton_state.json` (gitignored — never commit it).
-
 ---
 
-## Workflow 1: Automated Claude MCP Sync (RETIRED)
+## Retired: automated folder watcher
 
 Retired 2026-06 to enforce the single-writer policy: the launchd folder watcher
 was a second writer alongside the Python importer, and two concurrent writers
-are what caused duplicate workout rows. All syncing now goes through
-**Workflow 2** (`./peloton-sync.sh`).
-
-`peloton-claude-sync.sh` and `launchd/com.rickarmbrust.peloton-sync.plist`
-remain in the repo for reference only. The full setup, behavior, and
-field-mapping documentation for this workflow lives in git history if it's ever
-needed again (and it should only ever be revived if Workflow 2 is retired first
-— never run both).
+are what caused duplicate workout rows. Its script (`peloton-claude-sync.sh`)
+and plist were removed from the repo in 2026-10; they live in git history.
+Never revive it alongside `./peloton-sync.sh`.
 
 If a machine still has the watcher loaded, unload it:
 
@@ -166,7 +149,7 @@ rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
 
 ---
 
-## Workflow 2: Python CSV Import (the single write path)
+## Workflow 1: Python CSV Import (the single write path)
 
 ### How it works
 
@@ -175,8 +158,11 @@ rm ~/Library/LaunchAgents/com.rickarmbrust.peloton-sync.plist
 3. Run the sync script — it auto-detects the most recent matching CSV in `~/Downloads/`:
 
 ```bash
-./peloton-sync.sh
+op run --environment "$OP_ENVIRONMENT_ID" -- ./peloton-sync.sh
 ```
+
+(Examples below omit the `op run` prefix for brevity; every real run needs
+`AIRTABLE_TOKEN` in the environment.)
 
 Or specify a CSV path explicitly:
 
@@ -248,7 +234,7 @@ Keeps the most recently created record for each `Workout_timestamp` and deletes 
 
 ---
 
-## Workflow 2b: Workout ↔ Class Matching
+## Workflow 2: Workout ↔ Class Matching
 
 After workouts are imported into the **Peloton** table, they need to be linked
 (`LinkedRide`) to the matching class in the **Peloton-Rides** table so each
@@ -363,68 +349,16 @@ Tip: filter the table with `jq`, e.g. only the auto-matched rows:
 
 ---
 
-## Workflow 3: Class Scraper
-
-### How it works
-
-The scraper loads a saved Playwright session (`scraper/peloton_state.json`) and navigates to a Peloton class page to extract structured metadata not available in the CSV export.
-
-### Usage
-
-```bash
-cd scraper
-
-# By class URL
-python peloton_class_scrape_stateful.py \
-  --url 'https://members.onepeloton.com/classes/cycling?modal=classDetailsModal&classId=CLASS_ID'
-
-# By class ID only
-python peloton_class_scrape_stateful.py --class-id CLASS_ID
-```
-
-### Output
-
-JSON to stdout:
-
-```json
-{
-  "class_id": "...",
-  "class_detail_url": "...",
-  "ride_title": "...",
-  "instructor": "...",
-  "discipline": "cycling",
-  "duration_minutes": 45,
-  "class_timestamp": "...",
-  "description": "...",
-  "segments": [...],
-  "zone_allocations": [...]
-}
-```
-
-### Session expiry
-
-The saved session (`peloton_state.json`) will expire eventually (typically days to weeks). When the scraper fails to load class content or redirects to a login page, re-run:
-
-```bash
-cd scraper
-python peloton_login_save_session.py
-```
-
----
-
 ## Dependencies
 
 | Package | Used by | Notes |
 |---|---|---|
 | `requests` | `Peloton_Airtable_Import.py`, `Peloton_Match.py`, `Peloton_Dedup.py` | Airtable API calls |
-| `playwright` | `peloton_class_scrape_stateful.py`, `peloton_login_save_session.py` | Browser automation |
-| `python-dotenv` | `peloton_login_save_session.py` | Optional; loads `.env` files |
 
-Install all at once:
+Install:
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 ---
@@ -435,9 +369,7 @@ These files exist locally but are never committed:
 
 | File | Why |
 |---|---|
-| `.env` | Contains secrets |
-| `scraper/peloton_state.json` | Contains browser session cookies |
-| `debug.json`, `cycling_debug.*` | Scraper debug artifacts |
+| `.env` | Never create one; listed only as a guard against committing secrets |
 | `.venv/` | Python virtual environment |
 
 ---
@@ -446,6 +378,5 @@ These files exist locally but are never committed:
 
 A few known gaps and natural next steps:
 
-- **Peloton ↔ Peloton-Rides matching** — implemented in `Peloton_Match.py` / `peloton-match.sh` (Workflow 2b), and run automatically after each import. Tuning the scoring weights or the auto-match threshold is the natural next step.
-- **Scraper → Airtable integration** — The scraper currently outputs JSON to stdout. There's no script yet that takes scraper output and writes it into an Airtable table.
+- **Peloton ↔ Peloton-Rides matching** — implemented in `Peloton_Match.py` / `peloton-match.sh` (Workflow 2), and run automatically after each import. Tuning the scoring weights or the auto-match threshold is the natural next step.
 - **Instructor aliases** — `INSTRUCTOR_NAME_ALIASES` in `Peloton_Airtable_Import.py` maps Peloton CSV names to Airtable instructor names. Add entries there if new mismatches appear in the import warnings.

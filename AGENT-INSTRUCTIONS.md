@@ -334,6 +334,12 @@ answer before:
 - **A row with 0 or blank `TotalOutput` within a minute or two of a real ride
   is usually a duplicate import.** Don't count it, and mention it. A 0 on its
   own isn't proof; some real rides import without output.
+- **An aborted start is not a duplicate import.** A separate entry a few
+  minutes before the real ride, with small but nonzero output and distance
+  (for example 9 kJ and 0.4 mi, then the real ride four minutes later), is a
+  ride the owner started and abandoned. The sync imports it as its own
+  workout. Don't count it toward the week, and flag it to the owner rather
+  than calling it a duplicate.
 - **The data can't see context.** Illness, injury, travel or planned rest all
   look like missed training. Never call a week short without asking first.
   The owner context says how the training week is defined.

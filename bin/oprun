@@ -21,7 +21,7 @@ fi
 set -euo pipefail
 
 export PATH="/Library/Frameworks/Python.framework/Versions/Current/bin:/opt/homebrew/bin:/usr/bin:/bin"
-export OP_CLI="$HOME/opt/op-beta/op"
+export OP_CLI="${OP_CLI:-/opt/homebrew/bin/op}"
 
 service="${OPRUN_KEYCHAIN_SERVICE:-op-service-account}"
 account="${OPRUN_KEYCHAIN_ACCOUNT:-agent-spin-diesel}"
@@ -32,7 +32,7 @@ if [ $# -eq 0 ]; then
   exit 64
 fi
 if [ ! -x "$OP_CLI" ]; then
-  echo "oprun: 1Password beta CLI not found at $OP_CLI" >&2
+  echo "oprun: 1Password CLI not found at $OP_CLI (brew install --cask 1password-cli, 2.41.0+)" >&2
   exit 69
 fi
 

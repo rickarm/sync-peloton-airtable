@@ -2,6 +2,8 @@
 
 Syncs Peloton workout data and Withings weight/body-fat data into Airtable (base `appBmQA2p3z2Fdofa`).
 
+The agent-facing schema guide for the whole base is `SCHEMA.md` in the private repo `rickarm/sleep-airtable` (plus its Google Doc copy). When you add, rename or remove a table or field here, update both in the same change. `SETUP.md`'s appendix stays the scripts' contract.
+
 ## Development Workflow
 
 See `KB-Development-Workflow.md` in the Knowledge Base for the full workflow. Summary:

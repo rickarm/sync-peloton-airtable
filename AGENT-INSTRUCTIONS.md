@@ -327,6 +327,12 @@ answer before:
   date filters don't work on it. Sort descending and page back, or compare
   the leading `YYYY-MM-DD`. Ignore `ClassTimestampDate`: that's when the
   *class* first aired, not when the owner rode it.
+- **The time-zone label in `Workout_timestamp` is unreliable; trust the clock
+  time.** Labels are mixed across the year (`-07`, `PST`, `-08`, `EST`), and a
+  row exported again after a daylight-saving change can come back with a new
+  label and the same clock time. Read the wall-clock time as the owner's local
+  time and ignore the label. The sync still matches relabelled rows to their
+  existing records, so this does not create duplicates.
 - **`TimeInZone1_min` ... `TimeInZone7_min` are the class's planned zones**,
   copied from Peloton-Rides, not measured effort. The same class taken twice
   shows identical numbers. Call them "planned". `TotalOutput` (kJ) is the
